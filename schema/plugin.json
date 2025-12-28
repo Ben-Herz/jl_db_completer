@@ -1,0 +1,27 @@
+{
+  "jupyter.lab.shortcuts": [],
+  "title": "PostgreSQL Database Completer",
+  "description": "Settings for PostgreSQL database autocomplete in JupyterLab.",
+  "type": "object",
+  "properties": {
+    "enabled": {
+      "type": "boolean",
+      "title": "Enable PostgreSQL completions",
+      "description": "Enable or disable PostgreSQL table and column completions",
+      "default": true
+    },
+    "databaseUrl": {
+      "type": "string",
+      "title": "Database URL",
+      "description": "PostgreSQL connection string (e.g., postgresql://user:password@host:port/dbname). Leave empty to use POSTGRES_URL environment variable.",
+      "default": ""
+    },
+    "schema": {
+      "type": "string",
+      "title": "Database Schema",
+      "description": "PostgreSQL schema to query for table and column names",
+      "default": "public"
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,296 @@
+# Quick Start Guide
+
+Get PostgreSQL autocomplete working in JupyterLab in 2 minutes.
+
+## Prerequisites Checklist
+
+- [ ] PostgreSQL running on `localhost:5432`
+- [ ] Database `ehrexample` exists
+- [ ] User `postgres` with password `example` has access
+- [ ] Python 3.10+ installed
+- [ ] Virtual environment activated
+
+## Installation (Already Done!)
+
+The extension is already installed in development mode. Verify:
+
+```bash
+source .venv/bin/activate
+jupyter labextension list | grep jl_db_comp
+jupyter server extension list | grep jl_db_comp
+```
+
+Both should show "enabled" and "OK".
+
+## Start Testing Now
+
+### Step 1: Set Database Connection
+
+```bash
+source .venv/bin/activate
+export POSTGRES_URL="postgresql://postgres:example@localhost:5432/ehrexample"
+```
+
+### Step 2: Launch JupyterLab
+
+```bash
+jupyter lab
+```
+
+Your browser should open automatically to `http://localhost:8888`
+
+### Step 3: Test Autocompletion
+
+1. **Create a new notebook**: File → New → Notebook
+
+2. **Type SQL in a cell**:
+   ```sql
+   SELECT * FROM
+   ```
+
+3. **Press Tab or Ctrl+Space** and you should see:
+   - 📋 Table names from your database
+   - 📊 Column names with table context
+
+4. **Try column completion**:
+   ```sql
+   SELECT patient
+   ```
+   Press Tab to see columns starting with "patient"
+
+## What You Should See
+
+### Successful Autocomplete
+
+When working correctly, you'll see:
+
+```
+📋 patients
+📋 patient_visits
+📊 patient_id (patients)
+📊 patient_name (patients)
+```
+
+### Completion Menu
+
+- **Icon 📋** = Table
+- **Icon 📊** = Column
+- **Text format**: `name` for tables, `name (table)` for columns
+- **Hover**: Shows data type for columns
+
+## Troubleshooting
+
+### No Completions?
+
+**Check 1: SQL Keywords**
+- Completions only activate when SQL keywords are present
+- Try typing `SELECT * FROM ` first
+
+**Check 2: Database Connection**
+```bash
+python -c "import psycopg2; conn = psycopg2.connect('postgresql://postgres:example@localhost:5432/ehrexample'); print('✓ Connected'); conn.close()"
+```
+
+**Check 3: Browser Console**
+- Press F12 (or Cmd+Option+I on Mac)
+- Look for errors in Console tab
+- Check Network tab for failed API requests
+
+**Check 4: Server Logs**
+- Check the terminal where you ran `jupyter lab`
+- Look for PostgreSQL connection errors
+
+### Extension Not Loading?
+
+```bash
+# Re-register extension
+jupyter labextension develop . --overwrite
+jupyter server extension enable jl_db_comp
+
+# Restart JupyterLab (Ctrl+C, then jupyter lab again)
+```
+
+### Still Not Working?
+
+1. **Verify PostgreSQL is accessible**:
+   ```bash
+   psql -h localhost -U postgres -d ehrexample -c "SELECT 1;"
+   ```
+
+2. **Check extension status**:
+   ```bash
+   jupyter labextension list
+   jupyter server extension list
+   ```
+
+3. **Review full logs**:
+   - Browser console (F12 → Console)
+   - JupyterLab server terminal output
+
+## Development Mode
+
+For making changes to the extension:
+
+### Terminal 1: Auto-Rebuild
+```bash
+source .venv/bin/activate
+jlpm watch
+```
+
+### Terminal 2: Run JupyterLab
+```bash
+source .venv/bin/activate
+export POSTGRES_URL="postgresql://postgres:example@localhost:5432/ehrexample"
+jupyter lab
+```
+
+After changing TypeScript files:
+1. Save the file
+2. Wait for `jlpm watch` to rebuild (watch Terminal 1)
+3. Refresh browser (Cmd+R or Ctrl+R)
+
+After changing Python files:
+1. Save the file
+2. Restart JupyterLab (Ctrl+C in Terminal 2, then `jupyter lab` again)
+
+## Example Workflow
+
+Here's a complete example to verify everything works:
+
+### 1. Check Database Tables
+
+In a notebook cell:
+
+```python
+import psycopg2
+
+conn = psycopg2.connect("postgresql://postgres:example@localhost:5432/ehrexample")
+cursor = conn.cursor()
+
+cursor.execute("""
+    SELECT table_name
+    FROM information_schema.tables
+    WHERE table_schema = 'public'
+    ORDER BY table_name
+""")
+
+print("Tables in database:")
+for row in cursor.fetchall():
+    print(f"  📋 {row[0]}")
+
+cursor.close()
+conn.close()
+```
+
+### 2. Test Autocomplete
+
+In a new cell, type this and press Tab:
+
+```sql
+SELECT * FROM
+```
+
+You should see the same tables from step 1 appear in the autocomplete menu.
+
+### 3. Complete a Full Query
+
+```sql
+SELECT
+    p.patient_id,
+    p.name
+FROM patients p
+WHERE p.
+```
+
+Press Tab after `WHERE p.` to see column completions for the patients table.
+
+## Success Criteria
+
+You've successfully set up the extension when:
+
+- ✅ Typing SQL shows autocomplete menu
+- ✅ Tables appear with 📋 icon
+- ✅ Columns appear with 📊 icon and table context
+- ✅ Second autocomplete is faster (caching works)
+- ✅ No errors in browser console or server logs
+
+## Next Steps
+
+- **Read full docs**: See `README.md` for detailed configuration
+- **Testing guide**: See `TESTING.md` for comprehensive test cases
+- **Implementation details**: See `IMPLEMENTATION.md` for architecture
+- **Development**: See `CLAUDE.md` for coding standards
+
+## Configuration Options
+
+### Change Database Schema
+
+Via environment:
+```bash
+export POSTGRES_SCHEMA="custom_schema"
+```
+
+Via JupyterLab Settings:
+1. Settings → Settings Editor
+2. Search "PostgreSQL Database Completer"
+3. Set Schema to "custom_schema"
+
+### Change Database Connection
+
+Update the `POSTGRES_URL` environment variable:
+```bash
+export POSTGRES_URL="postgresql://user:pass@host:port/dbname"
+```
+
+Or configure via JupyterLab Settings (same location as above).
+
+## Common SQL Patterns to Test
+
+Try these patterns to verify autocomplete works in different contexts:
+
+```sql
+-- Basic SELECT
+SELECT * FROM patients
+
+-- JOIN
+SELECT * FROM patients p JOIN visits v ON
+
+-- WHERE
+SELECT * FROM patients WHERE patient
+
+-- Multiple columns
+SELECT patient_id, patient_name, FROM
+
+-- Subquery
+SELECT * FROM (SELECT * FROM patients)
+```
+
+## Performance Testing
+
+To verify caching is working:
+
+1. Type `SELECT * FROM pat` and press Tab
+2. Note the time it takes to show completions (~100-500ms)
+3. Delete your typing, then type it again
+4. Press Tab again - should be instant (<1ms)
+
+The second request should be noticeably faster because it's served from cache.
+
+## Getting Help
+
+If you're stuck:
+
+1. Check `TESTING.md` for detailed troubleshooting
+2. Review `IMPLEMENTATION.md` for how it works
+3. Open an issue: https://github.com/Ben-Herz/jl_db_completer/issues
+
+Include:
+- Extension versions (`jupyter labextension list`)
+- Browser console errors
+- JupyterLab server logs
+- PostgreSQL version
+- Steps to reproduce
+
+## That's It!
+
+You should now have a working PostgreSQL autocomplete in JupyterLab. Happy querying! 🎉

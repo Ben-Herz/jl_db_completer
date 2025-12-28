@@ -1,0 +1,18 @@
+# Changes here will be overwritten by Copier; NEVER EDIT MANUALLY
+_commit: v4.5.1
+_src_path: gh:jupyterlab/extension-template
+author_email: herzben@pm.me
+author_name: jl_db_completer
+create_claude_symlink: true
+create_gemini_symlink: true
+has_ai_rules: true
+has_binder: false
+has_settings: true
+kind: frontend-and-server
+labextension_name: jl_db_comp
+project_short_description: A JupyterLab extension to complete db queries in jupyterlab
+    notebooks
+python_name: jl_db_comp
+repository: https://github.com/Ben-Herz/jl_db_completer
+test: true
+

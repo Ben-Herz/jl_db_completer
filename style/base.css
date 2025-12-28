@@ -1,0 +1,24 @@
+/*
+    See the JupyterLab Developer Guide for useful CSS Patterns:
+
+    https://jupyterlab.readthedocs.io/en/stable/developer/css.html
+*/
+
+/* PostgreSQL completion item styling */
+.jp-jl-db-comp-completion-item {
+  font-family: var(--jp-code-font-family);
+}
+
+.jp-jl-db-comp-completion-table {
+  color: var(--jp-ui-font-color1);
+}
+
+.jp-jl-db-comp-completion-column {
+  color: var(--jp-brand-color1);
+}
+
+.jp-jl-db-comp-completion-documentation {
+  font-size: var(--jp-code-font-size-small);
+  color: var(--jp-ui-font-color2);
+  font-style: italic;
+}
