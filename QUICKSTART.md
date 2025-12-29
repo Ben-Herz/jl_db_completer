@@ -68,6 +68,25 @@ Your browser should open automatically to `http://localhost:8888`
    ```
    Press **Tab** after `p.` - if 'p' is recognized as a table name, you'll see its columns
 
+5. **Test Schema-Aware Completion**:
+   ```sql
+   SELECT * FROM information_schema.
+   ```
+   Press **Tab** after the dot - you should see:
+   - 📋 tables
+   - 📋 columns
+   - 👁️ views (and other views)
+   - All tables/views from the information_schema
+
+6. **Test Schema-Qualified Columns**:
+   ```sql
+   SELECT information_schema.tables.
+   ```
+   Press **Tab** - you should see columns from information_schema.tables:
+   - 📊 table_name (tables)
+   - 📊 table_schema (tables)
+   - 📊 table_type (tables)
+
 ## What You Should See
 
 ### Successful Autocomplete

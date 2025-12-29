@@ -127,27 +127,36 @@ export class PostgresCompletionProvider implements ICompletionProvider {
 
     const { text, offset } = request;
 
-    // Extract the word being typed (prefix) and check for table context
-    const { prefix, tableName } = this._extractContext(text, offset);
+    // Extract context: schema, table, and prefix
+    const extracted = this._extractContext(text, offset);
 
-    // Create cache key that includes table context
-    const cacheKey = tableName
-      ? `${tableName}.${prefix}`.toLowerCase()
-      : prefix.toLowerCase();
+    // Create cache key that includes full context
+    let cacheKey: string;
+    if (extracted.schema && extracted.tableName) {
+      // schema.table.prefix
+      cacheKey = `${extracted.schema}.${extracted.tableName}.${extracted.prefix}`.toLowerCase();
+    } else if (extracted.schemaOrTable) {
+      // schema.prefix OR table.prefix (ambiguous)
+      cacheKey = `${extracted.schemaOrTable}.${extracted.prefix}`.toLowerCase();
+    } else {
+      // just prefix
+      cacheKey = extracted.prefix.toLowerCase();
+    }
 
     // Check cache first
     const cached = this._getCached(cacheKey);
     if (cached) {
-      return this._formatReply(cached, request.offset, prefix);
+      return this._formatReply(cached, request.offset, extracted.prefix);
     }
 
     // Fetch from database
     try {
       const items = await fetchPostgresCompletions(
         this._dbUrl || undefined,
-        prefix,
-        this._schema,
-        tableName
+        extracted.prefix,
+        extracted.schema || this._schema,
+        extracted.tableName,
+        extracted.schemaOrTable
       );
 
       // Cache the results
@@ -156,7 +165,7 @@ export class PostgresCompletionProvider implements ICompletionProvider {
         timestamp: Date.now()
       });
 
-      return this._formatReply(items, request.offset, prefix);
+      return this._formatReply(items, request.offset, extracted.prefix);
     } catch (error) {
       console.error('Failed to fetch PostgreSQL completions:', error);
       return { start: request.offset, end: request.offset, items: [] };
@@ -164,30 +173,52 @@ export class PostgresCompletionProvider implements ICompletionProvider {
   }
 
   /**
-   * Extract context from the text: prefix being typed and optional table name.
+   * Extract context from the text: prefix being typed, optional table name, and optional schema.
    *
    * Detects patterns like:
-   * - "tablename." → { prefix: "", tableName: "tablename" }
-   * - "tablename.col" → { prefix: "col", tableName: "tablename" }
-   * - "patients p WHERE p." → { prefix: "", tableName: "p" }
-   * - "SELECT * FROM " → { prefix: "", tableName: undefined }
+   * - "schema.table.col" → { schema: "schema", tableName: "table", prefix: "col" }
+   * - "schema.table." → { schema: "schema", tableName: "table", prefix: "" }
+   * - "schema.tab" → { schemaOrTable: "schema", prefix: "tab" }
+   * - "schema." → { schemaOrTable: "schema", prefix: "" }
+   * - "table.col" → { schemaOrTable: "table", prefix: "col" }
+   * - "table." → { schemaOrTable: "table", prefix: "" }
+   * - "prefix" → { prefix: "prefix" }
+   *
+   * Note: For single-dot patterns (schema. or table.), the backend will determine
+   * whether it's a schema (list tables) or table (list columns) by checking the database.
    */
   private _extractContext(
     text: string,
     offset: number
-  ): { prefix: string; tableName?: string } {
+  ): {
+    prefix: string;
+    tableName?: string;
+    schema?: string;
+    schemaOrTable?: string;
+  } {
     const beforeCursor = text.substring(0, offset);
 
-    // Check if we're completing after a dot (table.column pattern)
-    const dotMatch = beforeCursor.match(/([\w]+)\.([\w]*)$/);
-    if (dotMatch) {
+    // Three-part pattern: schema.table.column
+    const threePartMatch = beforeCursor.match(/([\w]+)\.([\w]+)\.([\w]*)$/);
+    if (threePartMatch) {
       return {
-        tableName: dotMatch[1],
-        prefix: dotMatch[2]
+        schema: threePartMatch[1],
+        tableName: threePartMatch[2],
+        prefix: threePartMatch[3]
       };
     }
 
-    // Otherwise, extract the current word being typed
+    // Two-part pattern: could be schema.table OR table.column
+    // Backend will determine which by checking if first part is a schema
+    const twoPartMatch = beforeCursor.match(/([\w]+)\.([\w]*)$/);
+    if (twoPartMatch) {
+      return {
+        schemaOrTable: twoPartMatch[1],
+        prefix: twoPartMatch[2]
+      };
+    }
+
+    // Single word: just a prefix for tables in default schema
     const wordMatch = beforeCursor.match(/[\w]+$/);
     return {
       prefix: wordMatch ? wordMatch[0] : ''

@@ -138,18 +138,93 @@ SELECT patient
 - Shows tables starting with "patient" (if any)
 - Does NOT show columns from all tables
 
+#### Test 7: Schema-Aware Table Listing
+
+Type this and press **Tab** after the dot:
+
+```sql
+SELECT * FROM information_schema.
+```
+
+**Expected**:
+- Shows tables and views from 'information_schema' schema
+- Tables have 📋 icon
+- Views have 👁️ icon (or similar visual indicator)
+
+#### Test 8: Schema-Qualified Column Completion
+
+Type this and press **Tab**:
+
+```sql
+SELECT information_schema.tables.
+```
+
+**Expected**:
+- Shows columns from information_schema.tables
+- All columns have 📊 icon
+
+#### Test 9: Multi-Schema Query
+
+Type this and press **Tab** at each dot:
+
+```sql
+SELECT
+    public.patients.<Tab>,
+    custom_schema.users.<Tab>
+FROM public.patients
+JOIN custom_schema.users
+```
+
+**Expected**:
+- First Tab shows patient columns from public schema
+- Second Tab shows user columns from custom_schema
+
+#### Test 10: Ambiguous Single Dot Resolution
+
+Type this and press **Tab**:
+
+```sql
+-- If 'information_schema' is a schema in your database:
+SELECT * FROM information_schema.<Tab>
+-- Expected: Shows tables from information_schema
+
+-- If 'patients' is a table (not a schema):
+SELECT patients.<Tab>
+-- Expected: Shows columns from patients table
+```
+
+**Expected**:
+- Backend checks if identifier is a schema first
+- If yes, returns tables/views from that schema
+- If no, returns columns from that table in default schema
+
 ## Verification Checklist
 
+### Basic Functionality
 - [ ] Extension appears in `jupyter labextension list` as enabled
 - [ ] Server extension appears in `jupyter server extension list` as enabled
 - [ ] Can connect to PostgreSQL database (test with psycopg2)
 - [ ] Autocomplete menu appears when typing SQL
+
+### Table/Column Awareness
 - [ ] Table names appear with 📋 icon when NOT after a dot
 - [ ] Column names appear with 📊 icon when AFTER a dot (tablename.)
 - [ ] Typing "tablename." shows ONLY columns from that table
-- [ ] Typing without dot shows ONLY table names
+- [ ] Typing without dot shows ONLY table names from default schema
 - [ ] Column completions show table context in label
+
+### Schema Awareness
+- [ ] Typing "schemaname." shows tables and views from that schema
+- [ ] Typing "schemaname.tablename." shows columns from that table in that schema
+- [ ] Views appear with appropriate icon (👁️ or 📋)
+- [ ] Default schema (public) works without typing "public."
+- [ ] Backend correctly distinguishes between schema names and table names
+- [ ] Multi-schema queries work (e.g., public.table1 and custom_schema.table2)
+
+### Performance
 - [ ] Completions are cached (second request is faster)
+- [ ] Schema detection query is efficient
+- [ ] No noticeable delay when typing
 
 ## Important Notes
 

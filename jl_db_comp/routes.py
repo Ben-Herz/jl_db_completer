@@ -25,6 +25,7 @@ class PostgresCompletionsHandler(APIHandler):
         - prefix: Optional prefix to filter results
         - schema: Database schema (default: 'public')
         - table: Optional table name to filter columns (only returns columns from this table)
+        - schema_or_table: Ambiguous identifier - backend determines if it's a schema or table
         """
         if not PSYCOPG2_AVAILABLE:
             self.set_status(500)
@@ -39,6 +40,7 @@ class PostgresCompletionsHandler(APIHandler):
             prefix = self.get_argument('prefix', '').lower()
             schema = self.get_argument('schema', 'public')
             table = self.get_argument('table', None)
+            schema_or_table = self.get_argument('schema_or_table', None)
 
             if not db_url:
                 db_url = os.environ.get('POSTGRES_URL')
@@ -54,7 +56,7 @@ class PostgresCompletionsHandler(APIHandler):
                 }))
                 return
 
-            completions = self._fetch_completions(db_url, schema, prefix, table)
+            completions = self._fetch_completions(db_url, schema, prefix, table, schema_or_table)
             self.finish(json.dumps(completions))
 
         except psycopg2.Error as e:
@@ -78,7 +80,7 @@ class PostgresCompletionsHandler(APIHandler):
                 "columns": []
             }))
 
-    def _fetch_completions(self, db_url: str, schema: str, prefix: str, table: str = None) -> dict:
+    def _fetch_completions(self, db_url: str, schema: str, prefix: str, table: str = None, schema_or_table: str = None) -> dict:
         """Fetch table and column names from PostgreSQL.
 
         Args:
@@ -86,6 +88,7 @@ class PostgresCompletionsHandler(APIHandler):
             schema: Database schema name
             prefix: Filter prefix (case-insensitive)
             table: Optional table name to filter columns (only returns columns from this table)
+            schema_or_table: Ambiguous identifier - determine if it's a schema or table
 
         Returns:
             Dictionary with tables and columns arrays
@@ -98,8 +101,58 @@ class PostgresCompletionsHandler(APIHandler):
             tables = []
             columns = []
 
-            # If table is specified, only fetch columns from that table
-            if table:
+            # Handle schema_or_table: check if it's a schema first, then try as table
+            if schema_or_table:
+                # First, check if it's a schema
+                cursor.execute("""
+                    SELECT schema_name
+                    FROM information_schema.schemata
+                    WHERE LOWER(schema_name) = %s
+                """, (schema_or_table.lower(),))
+
+                is_schema = cursor.fetchone() is not None
+
+                if is_schema:
+                    # It's a schema - fetch tables and views from that schema
+                    cursor.execute("""
+                        SELECT table_name, table_type
+                        FROM information_schema.tables
+                        WHERE table_schema = %s
+                          AND table_type IN ('BASE TABLE', 'VIEW')
+                          AND LOWER(table_name) LIKE %s
+                        ORDER BY table_name
+                    """, (schema_or_table, f"{prefix}%"))
+
+                    tables = [
+                        {
+                            "name": row[0],
+                            "type": "view" if row[1] == 'VIEW' else "table"
+                        }
+                        for row in cursor.fetchall()
+                    ]
+                else:
+                    # Not a schema - treat as table name, fetch columns from default schema
+                    cursor.execute("""
+                        SELECT table_name, column_name, data_type
+                        FROM information_schema.columns
+                        WHERE table_schema = %s
+                          AND LOWER(table_name) = %s
+                          AND LOWER(column_name) LIKE %s
+                        ORDER BY ordinal_position
+                    """, (schema, schema_or_table.lower(), f"{prefix}%"))
+
+                    columns = [
+                        {
+                            "name": row[1],
+                            "table": row[0],
+                            "dataType": row[2],
+                            "type": "column"
+                        }
+                        for row in cursor.fetchall()
+                    ]
+
+            # If table is specified with explicit schema, fetch columns from that table
+            elif table:
                 cursor.execute("""
                     SELECT table_name, column_name, data_type
                     FROM information_schema.columns
@@ -119,20 +172,23 @@ class PostgresCompletionsHandler(APIHandler):
                     for row in cursor.fetchall()
                 ]
             else:
-                # Fetch table names
+                # No table or schema_or_table specified - fetch tables and views from default schema
                 cursor.execute("""
-                    SELECT table_name
+                    SELECT table_name, table_type
                     FROM information_schema.tables
                     WHERE table_schema = %s
-                      AND table_type = 'BASE TABLE'
+                      AND table_type IN ('BASE TABLE', 'VIEW')
                       AND LOWER(table_name) LIKE %s
                     ORDER BY table_name
                 """, (schema, f"{prefix}%"))
 
-                tables = [{"name": row[0], "type": "table"} for row in cursor.fetchall()]
-
-                # Don't fetch columns when no table is specified (only show tables)
-                # This prevents showing all columns from all tables
+                tables = [
+                    {
+                        "name": row[0],
+                        "type": "view" if row[1] == 'VIEW' else "table"
+                    }
+                    for row in cursor.fetchall()
+                ]
 
             cursor.close()
 

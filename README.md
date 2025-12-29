@@ -112,10 +112,34 @@ Autocomplete activates when SQL keywords are detected:
 - INSERT, UPDATE, DELETE
 - GROUP BY, ORDER BY, etc.
 
+### Schema-Aware Completion
+
+Access tables and columns from different schemas:
+
+```sql
+-- List tables from a specific schema
+SELECT * FROM custom_schema.<Tab>
+```
+
+**Completions will show tables and views from 'custom_schema':**
+- 📋 users
+- 📋 products
+- 👁️ active_users (view)
+
+```sql
+-- Access columns from schema-qualified table
+SELECT custom_schema.users.<Tab>
+```
+
+**Completions will show columns from custom_schema.users:**
+- 📊 user_id (users)
+- 📊 username (users)
+- 📊 email (users)
+
 ### Complete Example
 
 ```sql
--- Step 1: Type table name and press Tab
+-- Step 1: Type table name and press Tab (default schema)
 SELECT * FROM pat<Tab>
 -- → Suggests: patients, patient_visits
 
@@ -123,11 +147,18 @@ SELECT * FROM pat<Tab>
 SELECT patients.<Tab>
 -- → Shows columns: patient_id, patient_name, etc.
 
--- Step 3: With aliases
-SELECT p.<Tab>, v.<Tab>
-FROM patients p
-JOIN visits v ON p.patient_id = v.patient_id
--- → "p." shows patient columns, "v." shows visit columns
+-- Step 3: With different schemas
+SELECT
+    public.patients.<Tab>,
+    custom_schema.users.<Tab>
+FROM public.patients
+JOIN custom_schema.users ON patients.user_id = users.user_id
+-- → "public.patients." shows patient columns
+-- → "custom_schema.users." shows user columns
+
+-- Step 4: List tables from specific schema
+SELECT * FROM custom_schema.<Tab>
+-- → Shows tables and views from custom_schema
 ```
 
 ## Uninstall
