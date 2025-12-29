@@ -43,20 +43,30 @@ Your browser should open automatically to `http://localhost:8888`
 
 1. **Create a new notebook**: File → New → Notebook
 
-2. **Type SQL in a cell**:
+2. **Test Table Completion** - Type SQL in a cell:
    ```sql
-   SELECT * FROM
+   SELECT * FROM pat
    ```
+   Press **Tab** - you should see:
+   - 📋 patients
+   - 📋 patient_visits
+   - 📋 patient_records
 
-3. **Press Tab or Ctrl+Space** and you should see:
-   - 📋 Table names from your database
-   - 📊 Column names with table context
-
-4. **Try column completion**:
+3. **Test Column Completion** - After typing a table name and dot:
    ```sql
-   SELECT patient
+   SELECT patients.
    ```
-   Press Tab to see columns starting with "patient"
+   Press **Tab** - you should see only columns from the 'patients' table:
+   - 📊 patient_id (patients)
+   - 📊 patient_name (patients)
+   - etc.
+
+4. **Test with Aliases**:
+   ```sql
+   SELECT p.
+   FROM patients p
+   ```
+   Press **Tab** after `p.` - if 'p' is recognized as a table name, you'll see its columns
 
 ## What You Should See
 

@@ -27,12 +27,14 @@ export interface ICompletionsResponse {
  * @param dbUrl - PostgreSQL connection string (optional if using env var)
  * @param prefix - Optional prefix to filter completions
  * @param schema - Database schema name (default: 'public')
+ * @param tableName - Optional table name to filter columns (only returns columns from this table)
  * @returns Array of completion items
  */
 export async function fetchPostgresCompletions(
   dbUrl?: string,
   prefix = '',
-  schema = 'public'
+  schema = 'public',
+  tableName?: string
 ): Promise<ICompletionItem[]> {
   try {
     const params = new URLSearchParams();
@@ -43,6 +45,9 @@ export async function fetchPostgresCompletions(
       params.append('prefix', prefix);
     }
     params.append('schema', schema);
+    if (tableName) {
+      params.append('table', tableName);
+    }
 
     const endpoint = `completions?${params.toString()}`;
     const response = await requestAPI<ICompletionsResponse>(endpoint, {
@@ -52,6 +57,11 @@ export async function fetchPostgresCompletions(
     if (response.status === 'error') {
       console.error('PostgreSQL completion error:', response.message);
       return [];
+    }
+
+    // If table name is specified, only return columns
+    if (tableName) {
+      return response.columns;
     }
 
     return [...response.tables, ...response.columns];

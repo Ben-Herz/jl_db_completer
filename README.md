@@ -71,31 +71,63 @@ postgresql://user:pass@db.example.com:5432/mydb?sslmode=require
 
 ## Usage
 
-1. **Start typing SQL** in a notebook cell or editor:
-   ```sql
-   SELECT * FROM pat
-   ```
+### Table Name Completion
 
-2. **Trigger autocomplete** (Tab or Ctrl+Space):
-   - Table names appear with 📋 icon
-   - Column names appear with 📊 icon
-   - Column completions show table context: `column_name (table_name)`
-
-3. **Autocomplete activates** when SQL keywords are detected:
-   - SELECT, FROM, JOIN, WHERE
-   - INSERT, UPDATE, DELETE
-   - GROUP BY, ORDER BY, etc.
-
-### Example
+Type SQL and press **Tab** or **Ctrl+Space** to see table names:
 
 ```sql
--- Type this and press Tab after "pat"
-SELECT patient_id, name FROM pat
+SELECT * FROM pat<Tab>
+```
 
--- Completions will suggest:
--- 📋 patients
--- 📋 patient_visits
--- 📊 patient_id (patients)
+**Completions will show:**
+- 📋 patients
+- 📋 patient_visits
+- 📋 patient_records
+
+### Column Name Completion (After Table Name)
+
+After typing a table name followed by a dot, you'll see **only the columns from that table**:
+
+```sql
+SELECT patients.<Tab>
+```
+
+**Completions will show columns from 'patients' table:**
+- 📊 patient_id (patients)
+- 📊 patient_name (patients)
+- 📊 date_of_birth (patients)
+
+```sql
+-- Works with table aliases too:
+SELECT p.<Tab>
+FROM patients p
+```
+
+**Completions will show columns from 'p' (if it's a known table)**
+
+### Smart Activation
+
+Autocomplete activates when SQL keywords are detected:
+- SELECT, FROM, JOIN, WHERE
+- INSERT, UPDATE, DELETE
+- GROUP BY, ORDER BY, etc.
+
+### Complete Example
+
+```sql
+-- Step 1: Type table name and press Tab
+SELECT * FROM pat<Tab>
+-- → Suggests: patients, patient_visits
+
+-- Step 2: After selecting "patients", type dot and press Tab
+SELECT patients.<Tab>
+-- → Shows columns: patient_id, patient_name, etc.
+
+-- Step 3: With aliases
+SELECT p.<Tab>, v.<Tab>
+FROM patients p
+JOIN visits v ON p.patient_id = v.patient_id
+-- → "p." shows patient columns, "v." shows visit columns
 ```
 
 ## Uninstall

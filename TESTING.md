@@ -59,39 +59,84 @@ conn.close()
 
 Create a new cell and try the following:
 
-#### Test 1: Table Completion
+#### Test 1: Table Name Completion
 
-Type this and press **Tab** or **Ctrl+Space** after typing a few letters:
+Type this and press **Tab** after typing "pat":
 
 ```sql
 SELECT * FROM pat
 ```
 
-**Expected**: You should see a completion menu with tables starting with "pat"
+**Expected**:
+- Completion menu appears
+- Shows tables starting with "pat" (e.g., patients, patient_visits)
+- Shows ONLY tables, NOT columns
+- Tables have 📋 icon
 
-#### Test 2: Column Completion
+#### Test 2: Column Completion After Table Name
 
-Type this and press **Tab** after typing a few letters of a column name:
+Type this and press **Tab** after the dot:
 
 ```sql
-SELECT patient_
+SELECT patients.
 ```
 
-**Expected**: You should see column names from various tables
+**Expected**:
+- Shows ONLY columns from 'patients' table
+- Columns have 📊 icon
+- Shows data types when hovering
 
-#### Test 3: Complete SQL Query
+#### Test 3: Column Completion with Prefix
+
+Type this and press **Tab** after "pat":
+
+```sql
+SELECT patients.pat
+```
+
+**Expected**:
+- Shows only columns from 'patients' that start with "pat"
+- Example: patient_id, patient_name
+
+#### Test 4: Table Alias Completion
+
+```sql
+SELECT p.
+FROM patients p
+```
+
+Press **Tab** after `p.`
+
+**Expected**:
+- Shows columns from 'p' table (if 'p' exists as a table name in database)
+- Note: This works if 'p' is an actual table name, not for runtime aliases
+
+#### Test 5: Multiple Table References
 
 ```sql
 SELECT
-    p.patient_id,
-    p.name,
-    v.visit_date
-FROM patients p
-JOIN visits v ON p.patient_id = v.patient_id
-WHERE p.
+    patients.patient_id,
+    visits.
+FROM patients
+JOIN visits ON patients.patient_id = visits.patient_id
 ```
 
-Press **Tab** after `WHERE p.` to see column completions for the patients table
+Press **Tab** after `visits.`
+
+**Expected**:
+- Shows columns from 'visits' table only
+
+#### Test 6: No Column Suggestions Without Dot
+
+Type this and press **Tab**:
+
+```sql
+SELECT patient
+```
+
+**Expected**:
+- Shows tables starting with "patient" (if any)
+- Does NOT show columns from all tables
 
 ## Verification Checklist
 
@@ -99,10 +144,38 @@ Press **Tab** after `WHERE p.` to see column completions for the patients table
 - [ ] Server extension appears in `jupyter server extension list` as enabled
 - [ ] Can connect to PostgreSQL database (test with psycopg2)
 - [ ] Autocomplete menu appears when typing SQL
-- [ ] Table names appear with 📋 icon
-- [ ] Column names appear with 📊 icon
-- [ ] Column completions show table context
+- [ ] Table names appear with 📋 icon when NOT after a dot
+- [ ] Column names appear with 📊 icon when AFTER a dot (tablename.)
+- [ ] Typing "tablename." shows ONLY columns from that table
+- [ ] Typing without dot shows ONLY table names
+- [ ] Column completions show table context in label
 - [ ] Completions are cached (second request is faster)
+
+## Important Notes
+
+### Table Alias Limitation
+
+**Current behavior**: The extension detects `tablename.` patterns but does NOT parse SQL aliases.
+
+Example:
+```sql
+-- This WILL work if 'p' is an actual table name in your database:
+SELECT p.
+FROM patients p
+```
+
+```sql
+-- This will NOT work for alias resolution (shows columns from 'p' table, not 'patients'):
+SELECT p.
+FROM patients AS p
+```
+
+**Why**: Implementing full SQL alias resolution would require:
+1. Parsing the entire SQL query to find FROM/JOIN clauses
+2. Mapping aliases to actual table names
+3. Handling subqueries, CTEs, and complex query structures
+
+This is a future enhancement. For now, use actual table names after the dot for best results.
 
 ## Troubleshooting
 

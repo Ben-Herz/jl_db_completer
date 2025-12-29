@@ -127,11 +127,16 @@ export class PostgresCompletionProvider implements ICompletionProvider {
 
     const { text, offset } = request;
 
-    // Extract the word being typed (prefix)
-    const prefix = this._extractPrefix(text, offset);
+    // Extract the word being typed (prefix) and check for table context
+    const { prefix, tableName } = this._extractContext(text, offset);
+
+    // Create cache key that includes table context
+    const cacheKey = tableName
+      ? `${tableName}.${prefix}`.toLowerCase()
+      : prefix.toLowerCase();
 
     // Check cache first
-    const cached = this._getCached(prefix);
+    const cached = this._getCached(cacheKey);
     if (cached) {
       return this._formatReply(cached, request.offset, prefix);
     }
@@ -141,11 +146,12 @@ export class PostgresCompletionProvider implements ICompletionProvider {
       const items = await fetchPostgresCompletions(
         this._dbUrl || undefined,
         prefix,
-        this._schema
+        this._schema,
+        tableName
       );
 
       // Cache the results
-      this._cache.set(prefix.toLowerCase(), {
+      this._cache.set(cacheKey, {
         items,
         timestamp: Date.now()
       });
@@ -158,12 +164,34 @@ export class PostgresCompletionProvider implements ICompletionProvider {
   }
 
   /**
-   * Extract the word prefix being typed from the text at the given offset.
+   * Extract context from the text: prefix being typed and optional table name.
+   *
+   * Detects patterns like:
+   * - "tablename." → { prefix: "", tableName: "tablename" }
+   * - "tablename.col" → { prefix: "col", tableName: "tablename" }
+   * - "patients p WHERE p." → { prefix: "", tableName: "p" }
+   * - "SELECT * FROM " → { prefix: "", tableName: undefined }
    */
-  private _extractPrefix(text: string, offset: number): string {
+  private _extractContext(
+    text: string,
+    offset: number
+  ): { prefix: string; tableName?: string } {
     const beforeCursor = text.substring(0, offset);
-    const match = beforeCursor.match(/[\w.]+$/);
-    return match ? match[0] : '';
+
+    // Check if we're completing after a dot (table.column pattern)
+    const dotMatch = beforeCursor.match(/([\w]+)\.([\w]*)$/);
+    if (dotMatch) {
+      return {
+        tableName: dotMatch[1],
+        prefix: dotMatch[2]
+      };
+    }
+
+    // Otherwise, extract the current word being typed
+    const wordMatch = beforeCursor.match(/[\w]+$/);
+    return {
+      prefix: wordMatch ? wordMatch[0] : ''
+    };
   }
 
   /**
