@@ -39,15 +39,18 @@ const plugin: JupyterFrontEndPlugin<void> = {
         .then(settings => {
           provider = new PostgresCompletionProvider(settings);
           completionManager.registerProvider(provider);
+          console.log('JupyterLab extension jl_db_comp is activated!');
         })
         .catch(reason => {
           console.error('Failed to load settings for jl_db_comp:', reason);
           provider = new PostgresCompletionProvider();
           completionManager.registerProvider(provider);
+          console.log('JupyterLab extension jl_db_comp is activated!');
         });
     } else {
       provider = new PostgresCompletionProvider();
       completionManager.registerProvider(provider);
+      console.log('JupyterLab extension jl_db_comp is activated!');
     }
   }
 };
