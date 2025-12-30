@@ -294,6 +294,89 @@ In development mode, you will also need to remove the symlink created by `jupyte
 command. To find its location, you can run `jupyter labextension list` to figure out where the `labextensions`
 folder is located. Then you can remove the symlink named `jl_db_comp` within that folder.
 
+### Contributing Features and Fixes
+
+This project uses a **pull request workflow** for all changes. This enables automated changelog generation and streamlined releases.
+
+#### Development Workflow
+
+**1. Create a feature branch:**
+
+```bash
+# For new features
+git checkout -b feature/descriptive-name
+
+# For bug fixes
+git checkout -b fix/bug-description
+
+# For documentation updates
+git checkout -b docs/what-you-changed
+```
+
+**2. Make your changes:**
+
+- Write code following the guidelines in `AGENTS.md` / `CLAUDE.md`
+- Add tests for new functionality
+- Update documentation as needed
+- Run tests locally: `pytest -vv -r ap --cov jl_db_comp`
+- Format code: `jlpm run lint`
+
+**3. Commit and push:**
+
+```bash
+git add .
+git commit -m "Brief description of changes"
+git push origin feature/descriptive-name
+```
+
+**4. Create a Pull Request:**
+
+- Go to https://github.com/Ben-Herz/jl_db_completer/pulls
+- Click "New pull request"
+- Select your feature branch
+- **Write a clear PR title** - this becomes the changelog entry!
+  - ✅ Good: "Add support for MySQL databases"
+  - ✅ Good: "Fix JSONB key completion for nested objects"
+  - ❌ Bad: "updates", "fix bug", "changes"
+- Add a description explaining what changed and why
+- **Add labels** to categorize your PR:
+  - `enhancement` - New features
+  - `bug` - Bug fixes
+  - `documentation` - Documentation updates
+  - `maintenance` - Maintenance tasks
+- Click "Create pull request"
+
+**5. Review and merge:**
+
+- CI checks must pass (build, tests, linting)
+- Address any review feedback
+- Once approved, merge the PR
+- Delete the feature branch after merging
+
+#### Automated Releases
+
+Releases are created using GitHub Actions workflows:
+
+**Step 1: Prepare Release** (Manual workflow)
+
+- Go to **Actions** → **"Step 1: Prep Release"** → **"Run workflow"**
+- Optionally specify version (e.g., `0.2.0`, `patch`, `minor`, `major`)
+- The workflow will:
+  - Bump the version
+  - Generate changelog from merged PRs since last release
+  - Create a draft GitHub release
+
+**Step 2: Publish Release** (Manual workflow)
+
+- Review the draft release
+- Go to **Actions** → **"Step 2: Publish Release"** → **"Run workflow"**
+- The workflow will:
+  - Publish to PyPI
+  - Publish to npm
+  - Make the GitHub release public
+
+**Note:** Automated releases require repository secrets for PyPI (`NPM_TOKEN`) and GitHub App credentials. See [RELEASE.md](RELEASE.md) for setup details.
+
 ### Testing the extension
 
 #### Server tests
