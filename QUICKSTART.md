@@ -87,6 +87,49 @@ Your browser should open automatically to `http://localhost:8888`
    - 📊 table_schema (tables)
    - 📊 table_type (tables)
 
+7. **Test JSONB Keys** (if you have JSONB columns):
+
+   First, create a test table with JSONB data:
+   ```python
+   import psycopg2
+   conn = psycopg2.connect("postgresql://postgres:example@localhost:5432/ehrexample")
+   cursor = conn.cursor()
+
+   cursor.execute("""
+       CREATE TABLE IF NOT EXISTS patient_data (
+           id SERIAL PRIMARY KEY,
+           metadata JSONB
+       )
+   """)
+
+   cursor.execute("""
+       INSERT INTO patient_data (metadata) VALUES
+       ('{"allergies": ["penicillin"], "diagnosis": {"code": "A01", "description": "Typhoid"}}'),
+       ('{"allergies": [], "diagnosis": {"code": "B02", "description": "Shingles"}}')
+   """)
+   conn.commit()
+   cursor.close()
+   conn.close()
+   ```
+
+   Then test JSONB autocomplete:
+   ```sql
+   SELECT metadata-><Tab>
+   FROM patient_data
+   ```
+   Press **Tab** - you should see:
+   - 🔑 allergies
+   - 🔑 diagnosis
+
+   Test nested keys:
+   ```sql
+   SELECT metadata->>'diagnosis'-><Tab>
+   FROM patient_data
+   ```
+   Press **Tab** - you should see:
+   - 🔑 code
+   - 🔑 description
+
 ## What You Should See
 
 ### Successful Autocomplete

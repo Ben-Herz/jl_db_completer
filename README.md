@@ -136,6 +136,39 @@ SELECT custom_schema.users.<Tab>
 - 📊 username (users)
 - 📊 email (users)
 
+### JSONB Key Completion
+
+For JSONB columns, get autocomplete for JSON object keys after typing `->` or `->>`:
+
+```sql
+-- First-level JSONB keys
+SELECT metadata-><Tab>
+FROM patients
+```
+
+**Completions will show keys from the 'metadata' JSONB column:**
+- 🔑 allergies
+- 🔑 medications
+- 🔑 diagnosis
+
+```sql
+-- Nested JSONB keys
+SELECT metadata->>'diagnosis'-><Tab>
+FROM patients
+```
+
+**Completions will show nested keys under 'diagnosis':**
+- 🔑 code
+- 🔑 description
+- 🔑 date
+
+**How it works:**
+- Extension queries actual table data to extract unique JSONB keys
+- Supports nested paths (e.g., `column->>'key1'->>'key2'->`
+)
+- Samples up to 1000 rows for performance
+- Works with table-qualified columns (e.g., `patients.metadata->`)
+
 ### Complete Example
 
 ```sql
@@ -147,7 +180,15 @@ SELECT * FROM pat<Tab>
 SELECT patients.<Tab>
 -- → Shows columns: patient_id, patient_name, etc.
 
--- Step 3: With different schemas
+-- Step 3: JSONB key completion
+SELECT patients.metadata-><Tab>
+-- → Shows JSONB keys: allergies, medications, diagnosis
+
+-- Step 4: Nested JSONB keys
+SELECT patients.metadata->>'diagnosis'-><Tab>
+-- → Shows nested keys: code, description, date
+
+-- Step 5: With different schemas
 SELECT
     public.patients.<Tab>,
     custom_schema.users.<Tab>
@@ -156,7 +197,7 @@ JOIN custom_schema.users ON patients.user_id = users.user_id
 -- → "public.patients." shows patient columns
 -- → "custom_schema.users." shows user columns
 
--- Step 4: List tables from specific schema
+-- Step 6: List tables from specific schema
 SELECT * FROM custom_schema.<Tab>
 -- → Shows tables and views from custom_schema
 ```

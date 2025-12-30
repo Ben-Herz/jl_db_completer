@@ -2,13 +2,14 @@ import { ServerConnection } from '@jupyterlab/services';
 import { requestAPI } from './request';
 
 /**
- * Database completion item representing a table or column.
+ * Database completion item representing a table, column, or JSONB key.
  */
 export interface ICompletionItem {
   name: string;
-  type: 'table' | 'column';
+  type: 'table' | 'column' | 'view' | 'jsonb_key';
   table?: string;
   dataType?: string;
+  keyPath?: string[]; // For JSONB keys, the path to this key
 }
 
 /**
@@ -18,6 +19,7 @@ export interface ICompletionsResponse {
   status: 'success' | 'error';
   tables: ICompletionItem[];
   columns: ICompletionItem[];
+  jsonbKeys?: ICompletionItem[]; // JSONB keys from actual table data
   message?: string;
 }
 
@@ -29,6 +31,8 @@ export interface ICompletionsResponse {
  * @param schema - Database schema name (default: 'public')
  * @param tableName - Optional table name to filter columns (only returns columns from this table)
  * @param schemaOrTable - Ambiguous identifier that could be either a schema or table name (backend will determine)
+ * @param jsonbColumn - Optional JSONB column name to extract keys from
+ * @param jsonbPath - Optional JSONB path for nested key extraction
  * @returns Array of completion items
  */
 export async function fetchPostgresCompletions(
@@ -36,7 +40,9 @@ export async function fetchPostgresCompletions(
   prefix = '',
   schema = 'public',
   tableName?: string,
-  schemaOrTable?: string
+  schemaOrTable?: string,
+  jsonbColumn?: string,
+  jsonbPath?: string[]
 ): Promise<ICompletionItem[]> {
   try {
     const params = new URLSearchParams();
@@ -53,6 +59,12 @@ export async function fetchPostgresCompletions(
     if (schemaOrTable) {
       params.append('schema_or_table', schemaOrTable);
     }
+    if (jsonbColumn) {
+      params.append('jsonb_column', jsonbColumn);
+      if (jsonbPath && jsonbPath.length > 0) {
+        params.append('jsonb_path', JSON.stringify(jsonbPath));
+      }
+    }
 
     const endpoint = `completions?${params.toString()}`;
     const response = await requestAPI<ICompletionsResponse>(endpoint, {
@@ -62,6 +74,11 @@ export async function fetchPostgresCompletions(
     if (response.status === 'error') {
       console.error('PostgreSQL completion error:', response.message);
       return [];
+    }
+
+    // If JSONB keys requested, return only those
+    if (jsonbColumn && response.jsonbKeys) {
+      return response.jsonbKeys;
     }
 
     // Return appropriate results based on context

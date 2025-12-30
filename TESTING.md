@@ -198,6 +198,59 @@ SELECT patients.<Tab>
 - If yes, returns tables/views from that schema
 - If no, returns columns from that table in default schema
 
+#### Test 11: JSONB First-Level Keys
+
+Type this and press **Tab** (requires JSONB column):
+
+```sql
+SELECT metadata-><Tab>
+FROM patients
+```
+
+**Expected**:
+- Shows unique keys from the 'metadata' JSONB column
+- Keys have 🔑 icon
+- Only shows if 'metadata' is a JSONB column
+
+#### Test 12: JSONB Nested Keys
+
+Type this and press **Tab**:
+
+```sql
+SELECT metadata->>'diagnosis'-><Tab>
+FROM patients
+```
+
+**Expected**:
+- Shows keys nested under the 'diagnosis' key
+- Queries actual table data to extract nested structure
+
+#### Test 13: Table-Qualified JSONB Column
+
+Type this and press **Tab**:
+
+```sql
+SELECT patients.metadata-><Tab>
+FROM patients
+```
+
+**Expected**:
+- Shows JSONB keys from patients.metadata column
+- Works with table qualification
+
+#### Test 14: JSONB Key Prefix Filtering
+
+Type this and press **Tab** after "dia":
+
+```sql
+SELECT metadata->>dia<Tab>
+FROM patients
+```
+
+**Expected**:
+- Shows only keys starting with "dia"
+- Example: diagnosis, diagnostic_code
+
 ## Verification Checklist
 
 ### Basic Functionality
@@ -225,6 +278,15 @@ SELECT patients.<Tab>
 - [ ] Completions are cached (second request is faster)
 - [ ] Schema detection query is efficient
 - [ ] No noticeable delay when typing
+
+### JSONB Functionality (if you have JSONB columns)
+- [ ] Typing `column_name->` shows JSONB keys from that column
+- [ ] JSONB keys have 🔑 icon
+- [ ] Nested JSONB paths work (e.g., `column->>'key1'->`)
+- [ ] Table-qualified JSONB works (e.g., `table.column->`)
+- [ ] JSONB key prefix filtering works
+- [ ] Queries actual table data (samples up to 1000 rows)
+- [ ] No errors when querying non-JSONB columns
 
 ## Important Notes
 

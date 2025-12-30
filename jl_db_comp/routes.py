@@ -41,6 +41,8 @@ class PostgresCompletionsHandler(APIHandler):
             schema = self.get_argument('schema', 'public')
             table = self.get_argument('table', None)
             schema_or_table = self.get_argument('schema_or_table', None)
+            jsonb_column = self.get_argument('jsonb_column', None)
+            jsonb_path_str = self.get_argument('jsonb_path', None)
 
             if not db_url:
                 db_url = os.environ.get('POSTGRES_URL')
@@ -52,11 +54,22 @@ class PostgresCompletionsHandler(APIHandler):
                     "status": "success",
                     "tables": [],
                     "columns": [],
+                    "jsonbKeys": [],
                     "message": "No database URL provided"
                 }))
                 return
 
-            completions = self._fetch_completions(db_url, schema, prefix, table, schema_or_table)
+            # Parse JSON path if provided
+            jsonb_path = None
+            if jsonb_path_str:
+                try:
+                    jsonb_path = json.loads(jsonb_path_str)
+                except json.JSONDecodeError:
+                    jsonb_path = []
+
+            completions = self._fetch_completions(
+                db_url, schema, prefix, table, schema_or_table, jsonb_column, jsonb_path
+            )
             self.finish(json.dumps(completions))
 
         except psycopg2.Error as e:
@@ -80,7 +93,16 @@ class PostgresCompletionsHandler(APIHandler):
                 "columns": []
             }))
 
-    def _fetch_completions(self, db_url: str, schema: str, prefix: str, table: str = None, schema_or_table: str = None) -> dict:
+    def _fetch_completions(
+        self,
+        db_url: str,
+        schema: str,
+        prefix: str,
+        table: str = None,
+        schema_or_table: str = None,
+        jsonb_column: str = None,
+        jsonb_path: list = None
+    ) -> dict:
         """Fetch table and column names from PostgreSQL.
 
         Args:
@@ -89,9 +111,11 @@ class PostgresCompletionsHandler(APIHandler):
             prefix: Filter prefix (case-insensitive)
             table: Optional table name to filter columns (only returns columns from this table)
             schema_or_table: Ambiguous identifier - determine if it's a schema or table
+            jsonb_column: Optional JSONB column to extract keys from
+            jsonb_path: Optional path for nested JSONB key extraction
 
         Returns:
-            Dictionary with tables and columns arrays
+            Dictionary with tables, columns, and jsonbKeys arrays
         """
         conn = None
         try:
@@ -100,6 +124,20 @@ class PostgresCompletionsHandler(APIHandler):
 
             tables = []
             columns = []
+            jsonb_keys = []
+
+            # Handle JSONB key extraction
+            if jsonb_column:
+                jsonb_keys = self._fetch_jsonb_keys(
+                    cursor, schema, schema_or_table, jsonb_column, jsonb_path, prefix
+                )
+                cursor.close()
+                return {
+                    "status": "success",
+                    "tables": [],
+                    "columns": [],
+                    "jsonbKeys": jsonb_keys
+                }
 
             # Handle schema_or_table: check if it's a schema first, then try as table
             if schema_or_table:
@@ -201,6 +239,86 @@ class PostgresCompletionsHandler(APIHandler):
         finally:
             if conn:
                 conn.close()
+
+    def _fetch_jsonb_keys(
+        self,
+        cursor,
+        schema: str,
+        table_name: str,
+        jsonb_column: str,
+        jsonb_path: list = None,
+        prefix: str = ''
+    ) -> list:
+        """Extract unique JSONB keys from a column in a table.
+
+        Args:
+            cursor: Database cursor
+            schema: Database schema
+            table_name: Table containing the JSONB column (can be None)
+            jsonb_column: Name of the JSONB column
+            jsonb_path: Optional path for nested keys (e.g., ['user', 'profile'])
+            prefix: Filter prefix for keys
+
+        Returns:
+            List of JSONB key completion items
+        """
+        try:
+            # If no table specified, find tables with this JSONB column
+            if not table_name:
+                cursor.execute("""
+                    SELECT table_name
+                    FROM information_schema.columns
+                    WHERE table_schema = %s
+                      AND LOWER(column_name) = %s
+                      AND data_type = 'jsonb'
+                    LIMIT 1
+                """, (schema, jsonb_column.lower()))
+
+                result = cursor.fetchone()
+                if not result:
+                    return []
+
+                table_name = result[0]
+
+            # Build the JSONB path expression
+            if jsonb_path and len(jsonb_path) > 0:
+                # For nested paths: column->>'key1'->>'key2'
+                path_expr = jsonb_column
+                for key in jsonb_path:
+                    path_expr = f"{path_expr}->'{key}'"
+            else:
+                # For top-level keys: just the column
+                path_expr = jsonb_column
+
+            # Query to extract unique keys
+            # LIMIT to 1000 rows for performance (sample the table)
+            query = f"""
+                SELECT DISTINCT jsonb_object_keys({path_expr})
+                FROM {schema}.{table_name}
+                WHERE {path_expr} IS NOT NULL
+                  AND jsonb_typeof({path_expr}) = 'object'
+                LIMIT 1000
+            """
+
+            cursor.execute(query)
+            keys = cursor.fetchall()
+
+            # Filter by prefix and format results
+            result = []
+            for row in keys:
+                key = row[0]
+                if key.lower().startswith(prefix):
+                    result.append({
+                        "name": key,
+                        "type": "jsonb_key",
+                        "keyPath": (jsonb_path or []) + [key]
+                    })
+
+            return result
+
+        except psycopg2.Error as e:
+            self.log.error(f"JSONB key extraction error: {str(e).split(chr(10))[0]}")
+            return []
 
 
 def setup_route_handlers(web_app):
