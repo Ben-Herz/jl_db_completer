@@ -68,6 +68,7 @@ SELECT * FROM pat
 ```
 
 **Expected**:
+
 - Completion menu appears
 - Shows tables starting with "pat" (e.g., patients, patient_visits)
 - Shows ONLY tables, NOT columns
@@ -82,6 +83,7 @@ SELECT patients.
 ```
 
 **Expected**:
+
 - Shows ONLY columns from 'patients' table
 - Columns have 📊 icon
 - Shows data types when hovering
@@ -95,6 +97,7 @@ SELECT patients.pat
 ```
 
 **Expected**:
+
 - Shows only columns from 'patients' that start with "pat"
 - Example: patient_id, patient_name
 
@@ -108,6 +111,7 @@ FROM patients p
 Press **Tab** after `p.`
 
 **Expected**:
+
 - Shows columns from 'p' table (if 'p' exists as a table name in database)
 - Note: This works if 'p' is an actual table name, not for runtime aliases
 
@@ -124,6 +128,7 @@ JOIN visits ON patients.patient_id = visits.patient_id
 Press **Tab** after `visits.`
 
 **Expected**:
+
 - Shows columns from 'visits' table only
 
 #### Test 6: No Column Suggestions Without Dot
@@ -135,6 +140,7 @@ SELECT patient
 ```
 
 **Expected**:
+
 - Shows tables starting with "patient" (if any)
 - Does NOT show columns from all tables
 
@@ -147,6 +153,7 @@ SELECT * FROM information_schema.
 ```
 
 **Expected**:
+
 - Shows tables and views from 'information_schema' schema
 - Tables have 📋 icon
 - Views have 👁️ icon (or similar visual indicator)
@@ -160,6 +167,7 @@ SELECT information_schema.tables.
 ```
 
 **Expected**:
+
 - Shows columns from information_schema.tables
 - All columns have 📊 icon
 
@@ -176,6 +184,7 @@ JOIN custom_schema.users
 ```
 
 **Expected**:
+
 - First Tab shows patient columns from public schema
 - Second Tab shows user columns from custom_schema
 
@@ -194,6 +203,7 @@ SELECT patients.<Tab>
 ```
 
 **Expected**:
+
 - Backend checks if identifier is a schema first
 - If yes, returns tables/views from that schema
 - If no, returns columns from that table in default schema
@@ -208,6 +218,7 @@ FROM patients
 ```
 
 **Expected**:
+
 - Shows unique keys from the 'metadata' JSONB column
 - Keys have 🔑 icon
 - Only shows if 'metadata' is a JSONB column
@@ -222,6 +233,7 @@ FROM patients
 ```
 
 **Expected**:
+
 - Shows keys nested under the 'diagnosis' key
 - Queries actual table data to extract nested structure
 
@@ -235,6 +247,7 @@ FROM patients
 ```
 
 **Expected**:
+
 - Shows JSONB keys from patients.metadata column
 - Works with table qualification
 
@@ -248,18 +261,21 @@ FROM patients
 ```
 
 **Expected**:
+
 - Shows only keys starting with "dia"
 - Example: diagnosis, diagnostic_code
 
 ## Verification Checklist
 
 ### Basic Functionality
+
 - [ ] Extension appears in `jupyter labextension list` as enabled
 - [ ] Server extension appears in `jupyter server extension list` as enabled
 - [ ] Can connect to PostgreSQL database (test with psycopg2)
 - [ ] Autocomplete menu appears when typing SQL
 
 ### Table/Column Awareness
+
 - [ ] Table names appear with 📋 icon when NOT after a dot
 - [ ] Column names appear with 📊 icon when AFTER a dot (tablename.)
 - [ ] Typing "tablename." shows ONLY columns from that table
@@ -267,6 +283,7 @@ FROM patients
 - [ ] Column completions show table context in label
 
 ### Schema Awareness
+
 - [ ] Typing "schemaname." shows tables and views from that schema
 - [ ] Typing "schemaname.tablename." shows columns from that table in that schema
 - [ ] Views appear with appropriate icon (👁️ or 📋)
@@ -275,11 +292,13 @@ FROM patients
 - [ ] Multi-schema queries work (e.g., public.table1 and custom_schema.table2)
 
 ### Performance
+
 - [ ] Completions are cached (second request is faster)
 - [ ] Schema detection query is efficient
 - [ ] No noticeable delay when typing
 
 ### JSONB Functionality (if you have JSONB columns)
+
 - [ ] Typing `column_name->` shows JSONB keys from that column
 - [ ] JSONB keys have 🔑 icon
 - [ ] Nested JSONB paths work (e.g., `column->>'key1'->`)
@@ -295,6 +314,7 @@ FROM patients
 **Current behavior**: The extension detects `tablename.` patterns but does NOT parse SQL aliases.
 
 Example:
+
 ```sql
 -- This WILL work if 'p' is an actual table name in your database:
 SELECT p.
@@ -308,6 +328,7 @@ FROM patients AS p
 ```
 
 **Why**: Implementing full SQL alias resolution would require:
+
 1. Parsing the entire SQL query to find FROM/JOIN clauses
 2. Mapping aliases to actual table names
 3. Handling subqueries, CTEs, and complex query structures
@@ -377,17 +398,21 @@ Or configure via JupyterLab settings (Settings → PostgreSQL Database Completer
 ### Test Error Handling
 
 1. **Invalid database URL**:
+
    ```bash
    export POSTGRES_URL="postgresql://invalid:url@localhost:5432/baddb"
    jupyter lab
    ```
+
    Expected: No errors, completions return empty
 
 2. **No database URL**:
+
    ```bash
    unset POSTGRES_URL
    jupyter lab
    ```
+
    Expected: Extension loads but returns no completions
 
 3. **Database connection lost**:
@@ -444,6 +469,7 @@ jupyter lab
 If you encounter problems, collect this information:
 
 1. Extension versions:
+
    ```bash
    jupyter labextension list | grep jl_db_comp
    jupyter server extension list | grep jl_db_comp
@@ -454,6 +480,7 @@ If you encounter problems, collect this information:
 3. JupyterLab server logs (from terminal running `jupyter lab`)
 
 4. Database connection details (without password):
+
    ```bash
    echo $POSTGRES_URL | sed 's/:[^@]*@/:***@/'
    ```

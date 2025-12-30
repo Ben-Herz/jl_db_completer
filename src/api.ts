@@ -84,9 +84,7 @@ export async function fetchPostgresCompletions(
     // Return appropriate results based on context
     if (tableName || schemaOrTable) {
       // If we have table context, prefer columns
-      return response.columns.length > 0
-        ? response.columns
-        : response.tables;
+      return response.columns.length > 0 ? response.columns : response.tables;
     }
 
     return [...response.tables, ...response.columns];

@@ -60,28 +60,33 @@ The implementation is complete and follows JupyterLab 4.4+ best practices. The o
 ## Key Features Implemented
 
 ### 1. Smart SQL Detection
+
 - Checks editor content for SQL keywords before activating
 - Keywords: SELECT, FROM, JOIN, WHERE, INSERT, UPDATE, DELETE, etc.
 - Prevents unnecessary API calls in non-SQL contexts
 
 ### 2. PostgreSQL Integration
+
 - Queries `information_schema.tables` for table names
 - Queries `information_schema.columns` for column names with metadata
 - Supports schema filtering (default: 'public')
 - Handles connection errors gracefully
 
 ### 3. Client-Side Caching
+
 - Uses `Map<string, ICacheEntry>` with timestamp tracking
 - 5-minute TTL (300,000ms) configurable in `provider.ts`
 - Cache key: lowercase prefix
 - Significantly reduces database load for repeated queries
 
 ### 4. Prefix-Based Filtering
+
 - Server-side filtering using SQL `LIKE` with prefix
 - Case-insensitive matching
 - Efficient for large schemas
 
 ### 5. Rich Completion Display
+
 - Tables shown with 📋 icon
 - Columns shown with 📊 icon
 - Column completions include table context: `column_name (table_name)`
@@ -90,6 +95,7 @@ The implementation is complete and follows JupyterLab 4.4+ best practices. The o
 ## Database Query Details
 
 ### Tables Query
+
 ```sql
 SELECT table_name
 FROM information_schema.tables
@@ -100,6 +106,7 @@ ORDER BY table_name
 ```
 
 ### Columns Query
+
 ```sql
 SELECT table_name, column_name, data_type
 FROM information_schema.columns
@@ -118,13 +125,16 @@ ORDER BY table_name, ordinal_position
 ## Configuration Options
 
 ### Via Environment Variable (Recommended)
+
 ```bash
 export POSTGRES_URL="postgresql://postgres:example@localhost:5432/ehrexample"
 jupyter lab
 ```
 
 ### Via JupyterLab Settings
+
 Settings → PostgreSQL Database Completer:
+
 - Database URL: `postgresql://user:password@host:port/dbname`
 - Schema: `public` (or custom schema name)
 - Enabled: `true`/`false`
@@ -134,6 +144,7 @@ Settings → PostgreSQL Database Completer:
 See `TESTING.md` for detailed testing guide.
 
 ### Quick Test
+
 ```bash
 # 1. Set up environment
 source .venv/bin/activate
@@ -206,6 +217,7 @@ jl_db_completer/
 ## Dependencies
 
 ### Frontend
+
 - `@jupyterlab/application`: ^4.0.0
 - `@jupyterlab/completer`: ^4.0.0 (ADDED)
 - `@jupyterlab/coreutils`: ^6.0.0
@@ -213,6 +225,7 @@ jl_db_completer/
 - `@jupyterlab/settingregistry`: ^4.0.0
 
 ### Backend
+
 - `jupyter_server`: >=2.4.0,<3
 - `psycopg2-binary`: >=2.9.0 (ADDED)
 
@@ -221,11 +234,13 @@ jl_db_completer/
 ### GET `/jl-db-comp/completions`
 
 **Query Parameters:**
+
 - `db_url` (optional): URL-encoded PostgreSQL connection string
 - `prefix` (optional): Filter prefix for results
 - `schema` (default: 'public'): Database schema name
 
 **Response:**
+
 ```json
 {
   "status": "success",
@@ -247,6 +262,7 @@ jl_db_completer/
 ```
 
 **Error Response:**
+
 ```json
 {
   "status": "error",
@@ -261,6 +277,7 @@ jl_db_completer/
 See `README.md` and `CLAUDE.md` for complete development instructions.
 
 ### Quick Development Loop
+
 ```bash
 # Terminal 1: Auto-rebuild
 jlpm watch
@@ -296,6 +313,7 @@ jupyter lab
 See `CLAUDE.md` for coding standards and best practices.
 
 Key points:
+
 - No `console.log()` - use error logging or notifications
 - Follow TypeScript naming conventions (PascalCase for interfaces/classes)
 - Backend-frontend integration: Read backend first, write frontend to match

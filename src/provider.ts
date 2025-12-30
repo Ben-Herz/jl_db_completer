@@ -220,9 +220,7 @@ export class PostgresCompletionProvider implements ICompletionProvider {
       // Much simpler approach: find the last -> or ->> and work backwards
       // Look for: word characters, optional dot+word, then ->, then anything
       // Pattern: (word.)?word -> rest
-      const simpleMatch = beforeCursor.match(
-        /([\w]+\.)?([\w]+)\s*->\s*(.*)$/
-      );
+      const simpleMatch = beforeCursor.match(/([\w]+\.)?([\w]+)\s*->\s*(.*)$/);
 
       if (simpleMatch) {
         const tableOrSchema = simpleMatch[1]

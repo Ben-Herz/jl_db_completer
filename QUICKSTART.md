@@ -44,34 +44,42 @@ Your browser should open automatically to `http://localhost:8888`
 1. **Create a new notebook**: File → New → Notebook
 
 2. **Test Table Completion** - Type SQL in a cell:
+
    ```sql
    SELECT * FROM pat
    ```
+
    Press **Tab** - you should see:
    - 📋 patients
    - 📋 patient_visits
    - 📋 patient_records
 
 3. **Test Column Completion** - After typing a table name and dot:
+
    ```sql
    SELECT patients.
    ```
+
    Press **Tab** - you should see only columns from the 'patients' table:
    - 📊 patient_id (patients)
    - 📊 patient_name (patients)
    - etc.
 
 4. **Test with Aliases**:
+
    ```sql
    SELECT p.
    FROM patients p
    ```
+
    Press **Tab** after `p.` - if 'p' is recognized as a table name, you'll see its columns
 
 5. **Test Schema-Aware Completion**:
+
    ```sql
    SELECT * FROM information_schema.
    ```
+
    Press **Tab** after the dot - you should see:
    - 📋 tables
    - 📋 columns
@@ -79,9 +87,11 @@ Your browser should open automatically to `http://localhost:8888`
    - All tables/views from the information_schema
 
 6. **Test Schema-Qualified Columns**:
+
    ```sql
    SELECT information_schema.tables.
    ```
+
    Press **Tab** - you should see columns from information_schema.tables:
    - 📊 table_name (tables)
    - 📊 table_schema (tables)
@@ -90,6 +100,7 @@ Your browser should open automatically to `http://localhost:8888`
 7. **Test JSONB Keys** (if you have JSONB columns):
 
    First, create a test table with JSONB data:
+
    ```python
    import psycopg2
    conn = psycopg2.connect("postgresql://postgres:example@localhost:5432/ehrexample")
@@ -113,19 +124,23 @@ Your browser should open automatically to `http://localhost:8888`
    ```
 
    Then test JSONB autocomplete:
+
    ```sql
    SELECT metadata-><Tab>
    FROM patient_data
    ```
+
    Press **Tab** - you should see:
    - 🔑 allergies
    - 🔑 diagnosis
 
    Test nested keys:
+
    ```sql
    SELECT metadata->>'diagnosis'-><Tab>
    FROM patient_data
    ```
+
    Press **Tab** - you should see:
    - 🔑 code
    - 🔑 description
@@ -155,20 +170,24 @@ When working correctly, you'll see:
 ### No Completions?
 
 **Check 1: SQL Keywords**
+
 - Completions only activate when SQL keywords are present
 - Try typing `SELECT * FROM ` first
 
 **Check 2: Database Connection**
+
 ```bash
 python -c "import psycopg2; conn = psycopg2.connect('postgresql://postgres:example@localhost:5432/ehrexample'); print('✓ Connected'); conn.close()"
 ```
 
 **Check 3: Browser Console**
+
 - Press F12 (or Cmd+Option+I on Mac)
 - Look for errors in Console tab
 - Check Network tab for failed API requests
 
 **Check 4: Server Logs**
+
 - Check the terminal where you ran `jupyter lab`
 - Look for PostgreSQL connection errors
 
@@ -185,11 +204,13 @@ jupyter server extension enable jl_db_comp
 ### Still Not Working?
 
 1. **Verify PostgreSQL is accessible**:
+
    ```bash
    psql -h localhost -U postgres -d ehrexample -c "SELECT 1;"
    ```
 
 2. **Check extension status**:
+
    ```bash
    jupyter labextension list
    jupyter server extension list
@@ -204,12 +225,14 @@ jupyter server extension enable jl_db_comp
 For making changes to the extension:
 
 ### Terminal 1: Auto-Rebuild
+
 ```bash
 source .venv/bin/activate
 jlpm watch
 ```
 
 ### Terminal 2: Run JupyterLab
+
 ```bash
 source .venv/bin/activate
 export POSTGRES_URL="postgresql://postgres:example@localhost:5432/ehrexample"
@@ -217,11 +240,13 @@ jupyter lab
 ```
 
 After changing TypeScript files:
+
 1. Save the file
 2. Wait for `jlpm watch` to rebuild (watch Terminal 1)
 3. Refresh browser (Cmd+R or Ctrl+R)
 
 After changing Python files:
+
 1. Save the file
 2. Restart JupyterLab (Ctrl+C in Terminal 2, then `jupyter lab` again)
 
@@ -298,11 +323,13 @@ You've successfully set up the extension when:
 ### Change Database Schema
 
 Via environment:
+
 ```bash
 export POSTGRES_SCHEMA="custom_schema"
 ```
 
 Via JupyterLab Settings:
+
 1. Settings → Settings Editor
 2. Search "PostgreSQL Database Completer"
 3. Set Schema to "custom_schema"
@@ -310,6 +337,7 @@ Via JupyterLab Settings:
 ### Change Database Connection
 
 Update the `POSTGRES_URL` environment variable:
+
 ```bash
 export POSTGRES_URL="postgresql://user:pass@host:port/dbname"
 ```
@@ -357,6 +385,7 @@ If you're stuck:
 3. Open an issue: https://github.com/Ben-Herz/jl_db_completer/issues
 
 Include:
+
 - Extension versions (`jupyter labextension list`)
 - Browser console errors
 - JupyterLab server logs

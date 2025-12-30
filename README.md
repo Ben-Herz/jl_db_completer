@@ -61,6 +61,7 @@ postgresql://[user[:password]@][host][:port][/dbname]
 ```
 
 **Examples:**
+
 ```bash
 # Local database
 postgresql://postgres:example@localhost:5432/ehrexample
@@ -80,6 +81,7 @@ SELECT * FROM pat<Tab>
 ```
 
 **Completions will show:**
+
 - 📋 patients
 - 📋 patient_visits
 - 📋 patient_records
@@ -93,6 +95,7 @@ SELECT patients.<Tab>
 ```
 
 **Completions will show columns from 'patients' table:**
+
 - 📊 patient_id (patients)
 - 📊 patient_name (patients)
 - 📊 date_of_birth (patients)
@@ -108,6 +111,7 @@ FROM patients p
 ### Smart Activation
 
 Autocomplete activates when SQL keywords are detected:
+
 - SELECT, FROM, JOIN, WHERE
 - INSERT, UPDATE, DELETE
 - GROUP BY, ORDER BY, etc.
@@ -122,6 +126,7 @@ SELECT * FROM custom_schema.<Tab>
 ```
 
 **Completions will show tables and views from 'custom_schema':**
+
 - 📋 users
 - 📋 products
 - 👁️ active_users (view)
@@ -132,6 +137,7 @@ SELECT custom_schema.users.<Tab>
 ```
 
 **Completions will show columns from custom_schema.users:**
+
 - 📊 user_id (users)
 - 📊 username (users)
 - 📊 email (users)
@@ -147,6 +153,7 @@ FROM patients
 ```
 
 **Completions will show keys from the 'metadata' JSONB column:**
+
 - 🔑 allergies
 - 🔑 medications
 - 🔑 diagnosis
@@ -158,14 +165,16 @@ FROM patients
 ```
 
 **Completions will show nested keys under 'diagnosis':**
+
 - 🔑 code
 - 🔑 description
 - 🔑 date
 
 **How it works:**
+
 - Extension queries actual table data to extract unique JSONB keys
 - Supports nested paths (e.g., `column->>'key1'->>'key2'->`
-)
+  )
 - Samples up to 1000 rows for performance
 - Works with table-qualified columns (e.g., `patients.metadata->`)
 
