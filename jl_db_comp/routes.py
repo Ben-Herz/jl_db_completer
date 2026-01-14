@@ -276,9 +276,18 @@ class PostgresCompletionsHandler(APIHandler):
 
                 result = cursor.fetchone()
                 if not result:
+                    self.log.warning(
+                        f"JSONB completion: No JSONB column '{jsonb_column}' found "
+                        f"in schema '{schema}'. Verify the column exists and has "
+                        f"data_type='jsonb'."
+                    )
                     return []
 
                 table_name = result[0]
+                self.log.info(
+                    f"JSONB completion: Found column '{jsonb_column}' in "
+                    f"table '{schema}.{table_name}'"
+                )
 
             # Build the JSONB path expression
             if jsonb_path and len(jsonb_path) > 0:
@@ -289,6 +298,44 @@ class PostgresCompletionsHandler(APIHandler):
             else:
                 # For top-level keys: just the column
                 path_expr = jsonb_column
+
+            # First, check the data distribution at this path for diagnostics
+            diag_query = f"""
+                SELECT
+                    COUNT(*) as total_rows,
+                    COUNT({path_expr}) as non_null_count,
+                    COUNT(CASE WHEN jsonb_typeof({path_expr}) = 'object' THEN 1 END) as object_count,
+                    COUNT(CASE WHEN jsonb_typeof({path_expr}) = 'array' THEN 1 END) as array_count,
+                    COUNT(CASE WHEN jsonb_typeof({path_expr}) IN ('string', 'number', 'boolean') THEN 1 END) as scalar_count
+                FROM {schema}.{table_name}
+                LIMIT 1000
+            """
+            cursor.execute(diag_query)
+            diag = cursor.fetchone()
+
+            total_rows, non_null, obj_count, arr_count, scalar_count = diag
+
+            if non_null == 0:
+                self.log.warning(
+                    f"JSONB completion: Column '{jsonb_column}' in "
+                    f"'{schema}.{table_name}' has no non-NULL values at "
+                    f"path '{path_expr}'. Keys cannot be extracted from NULL data."
+                )
+                return []
+
+            if obj_count == 0:
+                type_info = []
+                if arr_count > 0:
+                    type_info.append(f"{arr_count} arrays")
+                if scalar_count > 0:
+                    type_info.append(f"{scalar_count} scalars")
+                self.log.warning(
+                    f"JSONB completion: Path '{path_expr}' in "
+                    f"'{schema}.{table_name}' contains no JSON objects "
+                    f"(found: {', '.join(type_info) if type_info else 'only NULL'}). "
+                    f"Keys can only be extracted from object types."
+                )
+                return []
 
             # Query to extract unique keys
             # LIMIT to 1000 rows for performance (sample the table)
@@ -303,6 +350,14 @@ class PostgresCompletionsHandler(APIHandler):
             cursor.execute(query)
             keys = cursor.fetchall()
 
+            if len(keys) == 0:
+                self.log.warning(
+                    f"JSONB completion: No keys found at path '{path_expr}' in "
+                    f"'{schema}.{table_name}' despite {obj_count} objects. "
+                    f"Objects may be empty {{}}."
+                )
+                return []
+
             # Filter by prefix and format results
             result = []
             for row in keys:
@@ -314,11 +369,235 @@ class PostgresCompletionsHandler(APIHandler):
                         "keyPath": (jsonb_path or []) + [key]
                     })
 
+            self.log.info(
+                f"JSONB completion: Found {len(keys)} unique keys at '{path_expr}' "
+                f"in '{schema}.{table_name}' (sampled {obj_count} objects)"
+            )
+
             return result
 
         except psycopg2.Error as e:
             self.log.error(f"JSONB key extraction error: {str(e).split(chr(10))[0]}")
             return []
+
+
+class JsonbDiagnosticsHandler(APIHandler):
+    """Handler for diagnosing JSONB column issues."""
+
+    @tornado.web.authenticated
+    def get(self):
+        """Get diagnostic information about JSONB columns.
+
+        Query parameters:
+        - db_url: URL-encoded PostgreSQL connection string
+        - schema: Database schema (default: 'public')
+        - table: Optional table name to check
+        - column: Optional JSONB column name to check
+        - jsonb_path: Optional JSON-encoded path array for nested diagnostics
+        """
+        if not PSYCOPG2_AVAILABLE:
+            self.set_status(500)
+            self.finish(json.dumps({
+                "status": "error",
+                "message": "psycopg2 is not installed"
+            }))
+            return
+
+        try:
+            db_url = self.get_argument('db_url', None)
+            schema = self.get_argument('schema', 'public')
+            table = self.get_argument('table', None)
+            column = self.get_argument('column', None)
+            jsonb_path_str = self.get_argument('jsonb_path', None)
+
+            if not db_url:
+                db_url = os.environ.get('POSTGRES_URL')
+            else:
+                db_url = unquote(db_url)
+
+            if not db_url:
+                self.finish(json.dumps({
+                    "status": "error",
+                    "message": "No database URL provided"
+                }))
+                return
+
+            jsonb_path = None
+            if jsonb_path_str:
+                try:
+                    jsonb_path = json.loads(jsonb_path_str)
+                except json.JSONDecodeError:
+                    jsonb_path = []
+
+            diagnostics = self._get_diagnostics(
+                db_url, schema, table, column, jsonb_path
+            )
+            self.finish(json.dumps(diagnostics))
+
+        except psycopg2.Error as e:
+            error_msg = str(e).split('\n')[0]
+            self.log.error(f"JSONB diagnostics error: {error_msg}")
+            self.set_status(500)
+            self.finish(json.dumps({
+                "status": "error",
+                "message": f"Database error: {error_msg}"
+            }))
+        except Exception as e:
+            error_msg = str(e)
+            self.log.error(f"JSONB diagnostics error: {error_msg}")
+            self.set_status(500)
+            self.finish(json.dumps({
+                "status": "error",
+                "message": f"Server error: {error_msg}"
+            }))
+
+    def _get_diagnostics(
+        self,
+        db_url: str,
+        schema: str,
+        table: str = None,
+        column: str = None,
+        jsonb_path: list = None
+    ) -> dict:
+        """Get diagnostic information about JSONB columns."""
+        conn = None
+        try:
+            conn = psycopg2.connect(db_url)
+            cursor = conn.cursor()
+
+            result = {
+                "status": "success",
+                "schema": schema,
+                "jsonbColumns": [],
+                "columnDiagnostics": None
+            }
+
+            # Find all JSONB columns in the schema
+            query_params = [schema]
+            query = """
+                SELECT table_name, column_name
+                FROM information_schema.columns
+                WHERE table_schema = %s
+                  AND data_type = 'jsonb'
+            """
+            if table:
+                query += " AND LOWER(table_name) = %s"
+                query_params.append(table.lower())
+            if column:
+                query += " AND LOWER(column_name) = %s"
+                query_params.append(column.lower())
+
+            query += " ORDER BY table_name, column_name"
+
+            cursor.execute(query, query_params)
+            jsonb_columns = cursor.fetchall()
+
+            result["jsonbColumns"] = [
+                {"table": row[0], "column": row[1]}
+                for row in jsonb_columns
+            ]
+
+            # If specific table and column provided, get detailed diagnostics
+            if table and column and len(jsonb_columns) > 0:
+                actual_table = jsonb_columns[0][0]
+                actual_column = jsonb_columns[0][1]
+
+                # Build path expression
+                if jsonb_path and len(jsonb_path) > 0:
+                    path_expr = actual_column
+                    for key in jsonb_path:
+                        path_expr = f"{path_expr}->'{key}'"
+                else:
+                    path_expr = actual_column
+
+                # Get type distribution
+                diag_query = f"""
+                    SELECT
+                        COUNT(*) as total_rows,
+                        COUNT({path_expr}) as non_null_count,
+                        COUNT(CASE WHEN jsonb_typeof({path_expr}) = 'object' THEN 1 END) as object_count,
+                        COUNT(CASE WHEN jsonb_typeof({path_expr}) = 'array' THEN 1 END) as array_count,
+                        COUNT(CASE WHEN jsonb_typeof({path_expr}) = 'string' THEN 1 END) as string_count,
+                        COUNT(CASE WHEN jsonb_typeof({path_expr}) = 'number' THEN 1 END) as number_count,
+                        COUNT(CASE WHEN jsonb_typeof({path_expr}) = 'boolean' THEN 1 END) as boolean_count,
+                        COUNT(CASE WHEN jsonb_typeof({path_expr}) = 'null' THEN 1 END) as json_null_count
+                    FROM {schema}.{actual_table}
+                """
+                cursor.execute(diag_query)
+                diag = cursor.fetchone()
+
+                result["columnDiagnostics"] = {
+                    "table": actual_table,
+                    "column": actual_column,
+                    "pathExpression": path_expr,
+                    "totalRows": diag[0],
+                    "nonNullCount": diag[1],
+                    "typeDistribution": {
+                        "object": diag[2],
+                        "array": diag[3],
+                        "string": diag[4],
+                        "number": diag[5],
+                        "boolean": diag[6],
+                        "null": diag[7]
+                    },
+                    "canExtractKeys": diag[2] > 0,
+                    "recommendation": self._get_recommendation(diag)
+                }
+
+                # If there are objects, get sample keys
+                if diag[2] > 0:
+                    try:
+                        key_query = f"""
+                            SELECT DISTINCT jsonb_object_keys({path_expr})
+                            FROM {schema}.{actual_table}
+                            WHERE {path_expr} IS NOT NULL
+                              AND jsonb_typeof({path_expr}) = 'object'
+                            LIMIT 20
+                        """
+                        cursor.execute(key_query)
+                        keys = [row[0] for row in cursor.fetchall()]
+                        result["columnDiagnostics"]["sampleKeys"] = keys
+                    except psycopg2.Error:
+                        result["columnDiagnostics"]["sampleKeys"] = []
+
+            cursor.close()
+            return result
+
+        finally:
+            if conn:
+                conn.close()
+
+    def _get_recommendation(self, diag) -> str:
+        """Generate a recommendation based on diagnostic data."""
+        total, non_null, obj, arr, string, number, boolean, json_null = diag
+
+        if non_null == 0:
+            return (
+                "All values are NULL. JSONB autocompletion requires non-NULL data. "
+                "Check that the column contains actual JSON data."
+            )
+
+        if obj == 0:
+            types_found = []
+            if arr > 0:
+                types_found.append(f"{arr} arrays")
+            if string > 0:
+                types_found.append(f"{string} strings")
+            if number > 0:
+                types_found.append(f"{number} numbers")
+            if boolean > 0:
+                types_found.append(f"{boolean} booleans")
+            if json_null > 0:
+                types_found.append(f"{json_null} JSON nulls")
+
+            return (
+                f"No JSON objects found. Found: {', '.join(types_found)}. "
+                f"JSONB key extraction only works with object types ({{}}). "
+                f"If your data contains arrays, you may need to navigate into "
+                f"array elements first."
+            )
+
+        return f"JSONB autocompletion should work. Found {obj} objects with extractable keys."
 
 
 def setup_route_handlers(web_app):
@@ -327,6 +606,11 @@ def setup_route_handlers(web_app):
     base_url = web_app.settings["base_url"]
 
     completions_route = url_path_join(base_url, "jl-db-comp", "completions")
-    handlers = [(completions_route, PostgresCompletionsHandler)]
+    diagnostics_route = url_path_join(base_url, "jl-db-comp", "jsonb-diagnostics")
+
+    handlers = [
+        (completions_route, PostgresCompletionsHandler),
+        (diagnostics_route, JsonbDiagnosticsHandler)
+    ]
 
     web_app.add_handlers(host_pattern, handlers)
