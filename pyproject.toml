@@ -79,6 +79,7 @@ build_dir = "jl_db_comp/labextension"
 
 [tool.jupyter-releaser.options]
 version_cmd = "hatch version"
+skip = ["npm-publish"]
 
 [tool.jupyter-releaser.hooks]
 before-build-npm = [
