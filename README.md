@@ -362,6 +362,7 @@ git push origin feature/descriptive-name
   - `maintenance` - Maintenance tasks
 
   > **Note:** At least one label is required. The "Enforce PR label" CI check will fail if no label is set. You can add labels when creating the PR or afterwards from the PR sidebar.
+
 - Click "Create pull request"
 
 **5. Review and merge:**

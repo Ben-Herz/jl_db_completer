@@ -158,7 +158,8 @@ export class PostgresCompletionProvider implements ICompletionProvider {
       return;
     }
 
-    this._connectionName = this._settings.get('connectionName').composite as string;
+    this._connectionName = this._settings.get('connectionName')
+      .composite as string;
     this._schema = this._settings.get('schema').composite as string;
     this._enabled = this._settings.get('enabled').composite as boolean;
   }
