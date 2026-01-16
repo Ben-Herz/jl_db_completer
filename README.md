@@ -355,11 +355,14 @@ git push origin feature/descriptive-name
   - ✅ Good: "Fix JSONB key completion for nested objects"
   - ❌ Bad: "updates", "fix bug", "changes"
 - Add a description explaining what changed and why
-- **Add labels** to categorize your PR:
+- **Add a label** (REQUIRED for CI to pass):
   - `enhancement` - New features
   - `bug` - Bug fixes
   - `documentation` - Documentation updates
   - `maintenance` - Maintenance tasks
+
+  > **Note:** At least one label is required. The "Enforce PR label" CI check will fail if no label is set. You can add labels when creating the PR or afterwards from the PR sidebar.
+
 - Click "Create pull request"
 
 **5. Review and merge:**

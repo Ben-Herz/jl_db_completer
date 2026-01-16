@@ -15,7 +15,7 @@ async def test_completions_no_db_url(jp_fetch):
     assert payload["status"] == "success"
     assert payload["tables"] == []
     assert payload["columns"] == []
-    assert "No database URL provided" in payload.get("message", "")
+    assert "No connection specified" in payload.get("message", "")
 
 
 async def test_completions_with_invalid_db_url(jp_fetch):
