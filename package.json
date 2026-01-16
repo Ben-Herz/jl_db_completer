@@ -1,6 +1,6 @@
 {
     "name": "jl_db_comp",
-    "version": "0.1.0",
+    "version": "0.1.1",
     "description": "A JupyterLab extension to complete db queries in jupyterlab notebooks",
     "keywords": [
         "jupyter",
@@ -60,6 +60,7 @@
         "@jupyterlab/application": "^4.0.0",
         "@jupyterlab/completer": "^4.0.0",
         "@jupyterlab/coreutils": "^6.0.0",
+        "@jupyterlab/notebook": "^4.0.0",
         "@jupyterlab/services": "^7.0.0",
         "@jupyterlab/settingregistry": "^4.0.0"
     },

@@ -4,7 +4,13 @@ import {
   ICompletionProvider
 } from '@jupyterlab/completer';
 import { ISettingRegistry } from '@jupyterlab/settingregistry';
-import { fetchPostgresCompletions, ICompletionItem } from './api';
+import { INotebookTracker } from '@jupyterlab/notebook';
+import { KernelMessage } from '@jupyterlab/services';
+import {
+  fetchPostgresCompletions,
+  fetchConnections,
+  ICompletionItem
+} from './api';
 
 /**
  * Cache entry for PostgreSQL completions.
@@ -13,6 +19,61 @@ interface ICacheEntry {
   items: ICompletionItem[];
   timestamp: number;
 }
+
+/**
+ * Python code to get the active jupysql connection alias and dsn_filename.
+ * Returns JSON with connection alias and absolute dsn_filename path.
+ */
+const GET_JUPYSQL_CONFIG_CODE = `
+import json
+import os
+result = {'connection': '', 'dsn_filename': ''}
+
+# Get active connection
+try:
+    from sql.connection import ConnectionManager
+    conn = ConnectionManager.current
+    if conn:
+        for alias, c in ConnectionManager.connections.items():
+            if c is conn:
+                result['connection'] = alias
+                break
+except:
+    pass
+
+# Get dsn_filename from SqlMagic instance
+dsn_filename = None
+try:
+    from sql.magic import SqlMagic
+    ip = get_ipython()
+    if ip:
+        for name, inst in ip.magics_manager.registry.items():
+            if isinstance(inst, SqlMagic):
+                dsn_filename = inst.dsn_filename
+                break
+except:
+    pass
+
+# Fallback: try to get from config
+if not dsn_filename:
+    try:
+        ip = get_ipython()
+        if ip and hasattr(ip, 'config'):
+            sql_config = ip.config.get('SqlMagic', {})
+            if 'dsn_filename' in sql_config:
+                dsn_filename = sql_config['dsn_filename']
+    except:
+        pass
+
+# Convert to absolute path if we have a dsn_filename
+if dsn_filename:
+    if not os.path.isabs(dsn_filename):
+        # Resolve relative to current working directory
+        dsn_filename = os.path.abspath(dsn_filename)
+    result['dsn_filename'] = dsn_filename
+
+print(json.dumps(result))
+`;
 
 /**
  * PostgreSQL completion provider for JupyterLab.
@@ -27,9 +88,17 @@ export class PostgresCompletionProvider implements ICompletionProvider {
   private _cache = new Map<string, ICacheEntry>();
   private _cacheTTL = 5 * 60 * 1000; // 5 minutes in milliseconds
   private _settings: ISettingRegistry.ISettings | null = null;
-  private _dbUrl = '';
+  private _notebookTracker: INotebookTracker | null = null;
+  private _connectionName = '';
   private _schema = 'public';
   private _enabled = true;
+  private _availableConnections: string[] = [];
+  private _cachedKernelConfig: {
+    connection: string;
+    dsnFilename: string;
+  } | null = null;
+  private _kernelConfigCacheTime = 0;
+  private _kernelConfigCacheTTL = 30 * 1000; // 30 seconds cache for kernel config
 
   /**
    * SQL keywords that trigger completion.
@@ -60,8 +129,14 @@ export class PostgresCompletionProvider implements ICompletionProvider {
    * Create a new PostgresCompletionProvider.
    *
    * @param settings - Optional settings registry to load database configuration
+   * @param notebookTracker - Optional notebook tracker to query kernels
    */
-  constructor(settings?: ISettingRegistry.ISettings | null) {
+  constructor(
+    settings?: ISettingRegistry.ISettings | null,
+    notebookTracker?: INotebookTracker | null
+  ) {
+    this._notebookTracker = notebookTracker || null;
+
     if (settings) {
       this._settings = settings;
       this._loadSettings();
@@ -70,6 +145,9 @@ export class PostgresCompletionProvider implements ICompletionProvider {
         this._loadSettings();
       });
     }
+
+    // Load available connections from backend
+    this._loadAvailableConnections();
   }
 
   /**
@@ -80,9 +158,109 @@ export class PostgresCompletionProvider implements ICompletionProvider {
       return;
     }
 
-    this._dbUrl = this._settings.get('databaseUrl').composite as string;
+    this._connectionName = this._settings.get('connectionName')
+      .composite as string;
     this._schema = this._settings.get('schema').composite as string;
     this._enabled = this._settings.get('enabled').composite as boolean;
+  }
+
+  /**
+   * Load available connections from the backend.
+   */
+  private async _loadAvailableConnections(): Promise<void> {
+    try {
+      const response = await fetchConnections();
+      if (response.status === 'success') {
+        this._availableConnections = Object.keys(response.connections);
+      }
+    } catch (error) {
+      console.warn('Failed to load available connections:', error);
+    }
+  }
+
+  /**
+   * Get jupysql configuration from the current notebook's kernel.
+   * Returns both the active connection alias and the configured dsn_filename.
+   *
+   * @returns Object with connection and dsnFilename, or null if not available
+   */
+  private async _getKernelConfig(): Promise<{
+    connection: string;
+    dsnFilename: string;
+  } | null> {
+    // Check cache first
+    const now = Date.now();
+    if (
+      this._cachedKernelConfig &&
+      now - this._kernelConfigCacheTime < this._kernelConfigCacheTTL
+    ) {
+      return this._cachedKernelConfig;
+    }
+
+    if (!this._notebookTracker) {
+      return null;
+    }
+
+    const notebook = this._notebookTracker.currentWidget;
+    if (!notebook) {
+      return null;
+    }
+
+    const kernel = notebook.sessionContext.session?.kernel;
+    if (!kernel) {
+      return null;
+    }
+
+    try {
+      const future = kernel.requestExecute({
+        code: GET_JUPYSQL_CONFIG_CODE,
+        silent: true,
+        store_history: false
+      });
+
+      const result = await new Promise<{
+        connection: string;
+        dsnFilename: string;
+      } | null>(resolve => {
+        let output = '';
+
+        future.onIOPub = (msg: KernelMessage.IIOPubMessage) => {
+          if (msg.header.msg_type === 'stream') {
+            const content = msg.content as KernelMessage.IStreamMsg['content'];
+            if (content.name === 'stdout') {
+              output += content.text;
+            }
+          }
+        };
+
+        future.done
+          .then(() => {
+            try {
+              const parsed = JSON.parse(output.trim());
+              resolve({
+                connection: parsed.connection || '',
+                dsnFilename: parsed.dsn_filename || ''
+              });
+            } catch {
+              resolve(null);
+            }
+          })
+          .catch(() => {
+            resolve(null);
+          });
+      });
+
+      // Cache the result
+      if (result) {
+        this._cachedKernelConfig = result;
+        this._kernelConfigCacheTime = now;
+      }
+
+      return result;
+    } catch (error) {
+      console.warn('Failed to get jupysql config from kernel:', error);
+      return null;
+    }
   }
 
   /**
@@ -160,14 +338,38 @@ export class PostgresCompletionProvider implements ICompletionProvider {
 
     // Fetch from database
     try {
+      // Get connection config from kernel (includes connection name and dsn_filename)
+      const kernelConfig = await this._getKernelConfig();
+
+      // Get connection: priority is settings -> kernel -> first available
+      let connectionName = this._connectionName;
+      let connectionsFilePath: string | undefined;
+
+      if (kernelConfig) {
+        // Use kernel's dsn_filename if available
+        if (kernelConfig.dsnFilename) {
+          connectionsFilePath = kernelConfig.dsnFilename;
+        }
+        // Use kernel's active connection if no settings override
+        if (!connectionName && kernelConfig.connection) {
+          connectionName = kernelConfig.connection;
+        }
+      }
+
+      if (!connectionName && this._availableConnections.length > 0) {
+        // Fall back to first available connection
+        connectionName = this._availableConnections[0];
+      }
+
       const items = await fetchPostgresCompletions(
-        this._dbUrl || undefined,
+        connectionName || undefined,
         extracted.prefix,
         extracted.schema || this._schema,
         extracted.tableName,
         extracted.schemaOrTable,
         extracted.jsonbColumn,
-        extracted.jsonbPath
+        extracted.jsonbPath,
+        connectionsFilePath
       );
 
       // Cache the results

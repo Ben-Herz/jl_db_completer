@@ -24,30 +24,84 @@ export interface ICompletionsResponse {
 }
 
 /**
+ * Connection configuration from connections.ini (without password).
+ */
+export interface IConnectionConfig {
+  drivername?: string;
+  username?: string;
+  host?: string;
+  port?: string;
+  database?: string;
+  has_password?: boolean;
+}
+
+/**
+ * Response from the connections list API endpoint.
+ */
+export interface IConnectionsResponse {
+  status: 'success' | 'error';
+  connections: Record<string, IConnectionConfig>;
+  filePath: string | null;
+  message?: string;
+}
+
+/**
+ * Fetch available database connections from connections.ini.
+ *
+ * @returns Dictionary of connection names to their config
+ */
+export async function fetchConnections(): Promise<IConnectionsResponse> {
+  try {
+    const response = await requestAPI<IConnectionsResponse>('connections', {
+      method: 'GET'
+    });
+    return response;
+  } catch (err) {
+    if (err instanceof ServerConnection.ResponseError) {
+      console.error(`Failed to fetch connections: ${err.message}`);
+    } else {
+      const msg = err instanceof Error ? err.message : 'Unknown error';
+      console.error(`Failed to fetch connections: ${msg}`);
+    }
+    return {
+      status: 'error',
+      connections: {},
+      filePath: null,
+      message: 'Failed to fetch connections'
+    };
+  }
+}
+
+/**
  * Fetch PostgreSQL table and column completions from the server.
  *
- * @param dbUrl - PostgreSQL connection string (optional if using env var)
+ * @param connectionName - Connection name from connections.ini
  * @param prefix - Optional prefix to filter completions
  * @param schema - Database schema name (default: 'public')
  * @param tableName - Optional table name to filter columns (only returns columns from this table)
  * @param schemaOrTable - Ambiguous identifier that could be either a schema or table name (backend will determine)
  * @param jsonbColumn - Optional JSONB column name to extract keys from
  * @param jsonbPath - Optional JSONB path for nested key extraction
+ * @param connectionsFilePath - Optional custom path to connections.ini file
  * @returns Array of completion items
  */
 export async function fetchPostgresCompletions(
-  dbUrl?: string,
+  connectionName?: string,
   prefix = '',
   schema = 'public',
   tableName?: string,
   schemaOrTable?: string,
   jsonbColumn?: string,
-  jsonbPath?: string[]
+  jsonbPath?: string[],
+  connectionsFilePath?: string
 ): Promise<ICompletionItem[]> {
   try {
     const params = new URLSearchParams();
-    if (dbUrl) {
-      params.append('db_url', encodeURIComponent(dbUrl));
+    if (connectionName) {
+      params.append('connection', connectionName);
+    }
+    if (connectionsFilePath) {
+      params.append('connections_file', connectionsFilePath);
     }
     if (prefix) {
       params.append('prefix', prefix);
