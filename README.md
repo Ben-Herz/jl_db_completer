@@ -235,6 +235,22 @@ the frontend extension, check the frontend extension is installed:
 jupyter labextension list
 ```
 
+### JSONB Autocompletion Not Working
+
+If JSONB key completion works on one database but not another, check the server logs (terminal running `jupyter lab`) for diagnostic messages when triggering completion.
+
+You can also call the diagnostics endpoint directly:
+
+```
+GET /jl-db-comp/jsonb-diagnostics?table=TABLE_NAME&column=COLUMN_NAME
+```
+
+This returns the JSONB type distribution and a recommendation. Common causes:
+
+- **All NULL values** - The column has no data
+- **Arrays instead of objects** - Keys can only be extracted from `{}` objects, not `[]` arrays
+- **Wrong schema** - Add `&schema=your_schema` if not using `public`
+
 ## Contributing
 
 ### Development install
