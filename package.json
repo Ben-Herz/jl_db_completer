@@ -1,6 +1,6 @@
 {
     "name": "jl_db_comp",
-    "version": "0.1.7",
+    "version": "0.1.8",
     "description": "A JupyterLab extension to complete db queries in jupyterlab notebooks",
     "keywords": [
         "jupyter",
