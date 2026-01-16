@@ -1,10 +1,15 @@
 import json
-import os
 from urllib.parse import unquote
 
 from jupyter_server.base.handlers import APIHandler
 from jupyter_server.utils import url_path_join
 import tornado
+
+from .connections import (
+    find_connections_file,
+    get_connection_url,
+    list_connections,
+)
 
 try:
     import psycopg2
@@ -21,7 +26,8 @@ class PostgresCompletionsHandler(APIHandler):
         """Fetch completions from PostgreSQL database.
 
         Query parameters:
-        - db_url: URL-encoded PostgreSQL connection string
+        - connection: Connection name from connections.ini (preferred)
+        - db_url: URL-encoded PostgreSQL connection string (fallback)
         - prefix: Optional prefix to filter results
         - schema: Database schema (default: 'public')
         - table: Optional table name to filter columns (only returns columns from this table)
@@ -36,6 +42,8 @@ class PostgresCompletionsHandler(APIHandler):
             return
 
         try:
+            connection_name = self.get_argument('connection', None)
+            connections_file = self.get_argument('connections_file', None)
             db_url = self.get_argument('db_url', None)
             prefix = self.get_argument('prefix', '').lower()
             schema = self.get_argument('schema', 'public')
@@ -44,9 +52,20 @@ class PostgresCompletionsHandler(APIHandler):
             jsonb_column = self.get_argument('jsonb_column', None)
             jsonb_path_str = self.get_argument('jsonb_path', None)
 
-            if not db_url:
-                db_url = os.environ.get('POSTGRES_URL')
-            else:
+            # Priority: connection name -> db_url parameter
+            if connection_name:
+                db_url = get_connection_url(connection_name, connections_file)
+                if not db_url:
+                    file_info = f" (searched in: {connections_file})" if connections_file else ""
+                    self.finish(json.dumps({
+                        "status": "error",
+                        "tables": [],
+                        "columns": [],
+                        "jsonbKeys": [],
+                        "message": f"Connection '{connection_name}' not found in connections.ini{file_info}"
+                    }))
+                    return
+            elif db_url:
                 db_url = unquote(db_url)
 
             if not db_url:
@@ -55,7 +74,7 @@ class PostgresCompletionsHandler(APIHandler):
                     "tables": [],
                     "columns": [],
                     "jsonbKeys": [],
-                    "message": "No database URL provided"
+                    "message": "No connection specified. Configure a connection in connections.ini or provide connection name."
                 }))
                 return
 
@@ -389,7 +408,8 @@ class JsonbDiagnosticsHandler(APIHandler):
         """Get diagnostic information about JSONB columns.
 
         Query parameters:
-        - db_url: URL-encoded PostgreSQL connection string
+        - connection: Connection name from connections.ini (preferred)
+        - db_url: URL-encoded PostgreSQL connection string (fallback)
         - schema: Database schema (default: 'public')
         - table: Optional table name to check
         - column: Optional JSONB column name to check
@@ -404,21 +424,29 @@ class JsonbDiagnosticsHandler(APIHandler):
             return
 
         try:
+            connection_name = self.get_argument('connection', None)
             db_url = self.get_argument('db_url', None)
             schema = self.get_argument('schema', 'public')
             table = self.get_argument('table', None)
             column = self.get_argument('column', None)
             jsonb_path_str = self.get_argument('jsonb_path', None)
 
-            if not db_url:
-                db_url = os.environ.get('POSTGRES_URL')
-            else:
+            # Priority: connection name -> db_url parameter
+            if connection_name:
+                db_url = get_connection_url(connection_name)
+                if not db_url:
+                    self.finish(json.dumps({
+                        "status": "error",
+                        "message": f"Connection '{connection_name}' not found in connections.ini"
+                    }))
+                    return
+            elif db_url:
                 db_url = unquote(db_url)
 
             if not db_url:
                 self.finish(json.dumps({
                     "status": "error",
-                    "message": "No database URL provided"
+                    "message": "No connection specified. Configure a connection in connections.ini."
                 }))
                 return
 
@@ -600,6 +628,38 @@ class JsonbDiagnosticsHandler(APIHandler):
         return f"JSONB autocompletion should work. Found {obj} objects with extractable keys."
 
 
+class ConnectionsHandler(APIHandler):
+    """Handler for listing available database connections."""
+
+    @tornado.web.authenticated
+    def get(self):
+        """List available connections from connections.ini.
+
+        Returns:
+            JSON response with:
+            - connections: Dictionary of available connections (without passwords)
+            - file_path: Path to the connections.ini file found
+        """
+        try:
+            connections = list_connections()
+            file_path = find_connections_file()
+
+            self.finish(json.dumps({
+                "status": "success",
+                "connections": connections,
+                "filePath": str(file_path) if file_path else None
+            }))
+
+        except Exception as e:
+            self.log.error(f"Error listing connections: {e}")
+            self.set_status(500)
+            self.finish(json.dumps({
+                "status": "error",
+                "message": f"Error reading connections: {str(e)}",
+                "connections": {}
+            }))
+
+
 def setup_route_handlers(web_app):
     """Register route handlers with the Jupyter server."""
     host_pattern = ".*$"
@@ -607,10 +667,12 @@ def setup_route_handlers(web_app):
 
     completions_route = url_path_join(base_url, "jl-db-comp", "completions")
     diagnostics_route = url_path_join(base_url, "jl-db-comp", "jsonb-diagnostics")
+    connections_route = url_path_join(base_url, "jl-db-comp", "connections")
 
     handlers = [
         (completions_route, PostgresCompletionsHandler),
-        (diagnostics_route, JsonbDiagnosticsHandler)
+        (diagnostics_route, JsonbDiagnosticsHandler),
+        (connections_route, ConnectionsHandler),
     ]
 
     web_app.add_handlers(host_pattern, handlers)
