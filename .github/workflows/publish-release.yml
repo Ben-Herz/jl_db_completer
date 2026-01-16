@@ -45,18 +45,18 @@ jobs:
           echo "release_tag=$RELEASE_TAG" >> $GITHUB_OUTPUT
           echo "Release tag: $RELEASE_TAG"
 
-          # Download only .whl and .tar.gz files (Python packages), skip .tgz (npm)
-          for asset in $(gh release view "$RELEASE_TAG" --json assets -q '.assets[].name'); do
-            if [[ "$asset" == *.whl ]] || [[ "$asset" == *.tar.gz ]]; then
-              echo "Downloading: $asset"
-              gh release download "$RELEASE_TAG" --pattern "$asset" --dir dist
-            else
-              echo "Skipping: $asset (npm package)"
-            fi
-          done
+          # Download only Python packages (.whl and .tar.gz), skip npm (.tgz)
+          gh release download "$RELEASE_TAG" --repo "${{ github.repository }}" --pattern "*.whl" --dir dist || true
+          gh release download "$RELEASE_TAG" --repo "${{ github.repository }}" --pattern "*.tar.gz" --dir dist || true
 
           echo "Downloaded files:"
           ls -la dist/
+
+          # Verify we have files
+          if [ -z "$(ls dist/*.whl 2>/dev/null)" ] && [ -z "$(ls dist/*.tar.gz 2>/dev/null)" ]; then
+            echo "ERROR: No Python packages found in dist/"
+            exit 1
+          fi
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
 
