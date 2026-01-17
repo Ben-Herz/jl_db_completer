@@ -68,7 +68,7 @@ jobs:
       - name: Publish GitHub Release
         run: |
           RELEASE_TAG="${{ steps.download.outputs.release_tag }}"
-          gh release edit "$RELEASE_TAG" --draft=false
+          gh release edit "$RELEASE_TAG" --draft=false --repo "${{ github.repository }}"
           echo "## Release Published Successfully!" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "- **GitHub Release**: https://github.com/${{ github.repository }}/releases/tag/$RELEASE_TAG" >> $GITHUB_STEP_SUMMARY
