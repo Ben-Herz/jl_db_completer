@@ -418,21 +418,12 @@ export class PostgresCompletionProvider implements ICompletionProvider {
 
     // JSONB pattern: Detect -> or ->> operators
     // Examples: metadata-> or content -> or patients.metadata->>'key'->
+    // Also handles: schema.table.column-> for non-public schemas
     if (beforeCursor.includes('->')) {
-      // Much simpler approach: find the last -> or ->> and work backwards
-      // Look for: word characters, optional dot+word, then ->, then anything
-      // Pattern: (word.)?word -> rest
-      const simpleMatch = beforeCursor.match(/([\w]+\.)?([\w]+)\s*->\s*(.*)$/);
-
-      if (simpleMatch) {
-        const tableOrSchema = simpleMatch[1]
-          ? simpleMatch[1].slice(0, -1)
-          : undefined; // Remove trailing dot
-        const columnName = simpleMatch[2];
-        const afterOperator = simpleMatch[3];
-
-        // Parse the path after the first ->
-        // Example: "'key1'->>'key2'->" or "key1" or ""
+      // Helper to parse the path after the first -> operator
+      const parseJsonbPath = (
+        afterOperator: string
+      ): { jsonbPath: string[]; prefix: string } => {
         const jsonbPath: string[] = [];
         const pathRegex = /['"]?([\w]+)['"]?\s*->/g;
         let pathMatch;
@@ -441,24 +432,67 @@ export class PostgresCompletionProvider implements ICompletionProvider {
         }
 
         // Get the current prefix (what's being typed after the last ->)
-        // Remove any keys that are part of the path
         const lastArrowIndex = afterOperator.lastIndexOf('->');
-        let currentPrefix = '';
+        let prefix = '';
         if (lastArrowIndex >= 0) {
-          currentPrefix = afterOperator
+          prefix = afterOperator
             .substring(lastArrowIndex + 2)
             .trim()
             .replace(/['"]/g, '');
         } else {
-          // No nested path, just get whatever is after the ->
-          currentPrefix = afterOperator.trim().replace(/['"]/g, '');
+          prefix = afterOperator.trim().replace(/['"]/g, '');
         }
+
+        return { jsonbPath, prefix };
+      };
+
+      // Three-part JSONB pattern: schema.table.column->
+      const threePartMatch = beforeCursor.match(
+        /([\w]+)\.([\w]+)\.([\w]+)\s*->\s*(.*)$/
+      );
+      if (threePartMatch) {
+        const schema = threePartMatch[1];
+        const tableName = threePartMatch[2];
+        const columnName = threePartMatch[3];
+        const afterOperator = threePartMatch[4];
+        const { jsonbPath, prefix } = parseJsonbPath(afterOperator);
+
+        return {
+          schema,
+          tableName,
+          jsonbColumn: columnName,
+          jsonbPath,
+          prefix
+        };
+      }
+
+      // Two-part JSONB pattern: table.column-> (or schema.column-> - backend determines)
+      const twoPartMatch = beforeCursor.match(/([\w]+)\.([\w]+)\s*->\s*(.*)$/);
+      if (twoPartMatch) {
+        const tableOrSchema = twoPartMatch[1];
+        const columnName = twoPartMatch[2];
+        const afterOperator = twoPartMatch[3];
+        const { jsonbPath, prefix } = parseJsonbPath(afterOperator);
 
         return {
           schemaOrTable: tableOrSchema,
           jsonbColumn: columnName,
           jsonbPath,
-          prefix: currentPrefix
+          prefix
+        };
+      }
+
+      // One-part JSONB pattern: column-> (no table prefix)
+      const onePartMatch = beforeCursor.match(/([\w]+)\s*->\s*(.*)$/);
+      if (onePartMatch) {
+        const columnName = onePartMatch[1];
+        const afterOperator = onePartMatch[2];
+        const { jsonbPath, prefix } = parseJsonbPath(afterOperator);
+
+        return {
+          jsonbColumn: columnName,
+          jsonbPath,
+          prefix
         };
       }
     }
