@@ -2,6 +2,25 @@
 
 <!-- <START NEW CHANGELOG ENTRY> -->
 
+## 0.1.11
+
+([Full Changelog](https://github.com/Ben-Herz/jl_db_completer/compare/268768849e34f9d3706326960344e370ae500036...268768849e34f9d3706326960344e370ae500036))
+
+### Enhancements made
+
+- improved performance for db queries [#5](https://github.com/Ben-Herz/jl_db_completer/pull/5) ([@Ben-Herz](https://github.com/Ben-Herz))
+
+### Contributors to this release
+
+The following people contributed discussions, new ideas, code and documentation contributions, and review.
+See [our definition of contributors](https://github-activity.readthedocs.io/en/latest/use/#how-does-this-tool-define-contributions-in-the-reports).
+
+([GitHub contributors page for this release](https://github.com/Ben-Herz/jl_db_completer/graphs/contributors?from=2026-02-05&to=2026-02-05&type=c))
+
+@Ben-Herz ([activity](https://github.com/search?q=repo%3ABen-Herz%2Fjl_db_completer+involves%3ABen-Herz+updated%3A2026-02-05..2026-02-05&type=Issues))
+
+<!-- <END NEW CHANGELOG ENTRY> -->
+
 ## 0.1.10
 
 ([Full Changelog](https://github.com/Ben-Herz/jl_db_completer/compare/207a722e9c86de77d7c6cc64ca9ffdeacfbe717c...71445c1bc4882acdf6478a77d2a0e2fce0d8af02))
@@ -26,8 +45,6 @@ See [our definition of contributors](https://github-activity.readthedocs.io/en/l
 ([GitHub contributors page for this release](https://github.com/Ben-Herz/jl_db_completer/graphs/contributors?from=2026-01-04&to=2026-01-28&type=c))
 
 @Ben-Herz ([activity](https://github.com/search?q=repo%3ABen-Herz%2Fjl_db_completer+involves%3ABen-Herz+updated%3A2026-01-04..2026-01-28&type=Issues)) | @claude ([activity](https://github.com/search?q=repo%3ABen-Herz%2Fjl_db_completer+involves%3Aclaude+updated%3A2026-01-04..2026-01-28&type=Issues))
-
-<!-- <END NEW CHANGELOG ENTRY> -->
 
 ## 0.1.9
 
