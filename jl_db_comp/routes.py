@@ -1,4 +1,8 @@
+import hashlib
 import json
+import threading
+import time
+from contextlib import contextmanager
 from urllib.parse import unquote
 
 from jupyter_server.base.handlers import APIHandler
@@ -13,10 +17,132 @@ from .connections import (
 
 try:
     import psycopg2
+    import psycopg2.pool
+    from psycopg2 import sql as pgsql
     PSYCOPG2_AVAILABLE = True
 except ImportError:
     PSYCOPG2_AVAILABLE = False
 
+
+# ---------------------------------------------------------------------------
+# Connection pool
+# ---------------------------------------------------------------------------
+
+_pools: dict = {}
+_pool_lock = threading.Lock()
+
+
+@contextmanager
+def _pooled_connection(db_url: str):
+    """Borrow a connection from a per-URL pool, return it on exit.
+
+    Creates the pool lazily on first use (minconn=1, maxconn=5).
+    Sets ``autocommit=True`` since all queries are read-only.
+    On ``OperationalError`` the connection is discarded instead of returned.
+    """
+    conn = None
+    discard = False
+    try:
+        with _pool_lock:
+            if db_url not in _pools:
+                _pools[db_url] = psycopg2.pool.ThreadedConnectionPool(
+                    minconn=1, maxconn=5, dsn=db_url,
+                )
+        conn = _pools[db_url].getconn()
+        conn.autocommit = True
+        yield conn
+    except psycopg2.OperationalError:
+        discard = True
+        raise
+    finally:
+        if conn is not None:
+            try:
+                with _pool_lock:
+                    pool = _pools.get(db_url)
+                    if pool:
+                        pool.putconn(conn, close=discard)
+            except Exception:
+                pass
+
+
+# ---------------------------------------------------------------------------
+# Metadata cache (TTL = 120 s)
+# ---------------------------------------------------------------------------
+
+class _MetadataCache:
+    """Thread-safe TTL cache for database metadata."""
+
+    def __init__(self, ttl_seconds: float = 120.0):
+        self._ttl = ttl_seconds
+        self._data: dict = {}
+        self._lock = threading.Lock()
+
+    def get(self, key: str):
+        """Return cached value, or ``None`` if missing / expired."""
+        with self._lock:
+            entry = self._data.get(key)
+            if entry is None:
+                return None
+            value, expiry = entry
+            if time.monotonic() > expiry:
+                del self._data[key]
+                return None
+            return value
+
+    def put(self, key: str, value):
+        """Store *value* with TTL starting now."""
+        with self._lock:
+            self._data[key] = (value, time.monotonic() + self._ttl)
+
+    def clear(self):
+        """Drop every entry."""
+        with self._lock:
+            self._data.clear()
+
+
+_cache = _MetadataCache(ttl_seconds=120)
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _url_id(db_url: str) -> str:
+    """Short hash of a connection URL for use in cache keys."""
+    return hashlib.sha256(db_url.encode()).hexdigest()[:12]
+
+
+def _filter_by_prefix(items: list, prefix: str) -> list:
+    """Return items whose ``name`` starts with *prefix* (case-insensitive)."""
+    if not prefix:
+        return items
+    lp = prefix.lower()
+    return [item for item in items if item["name"].lower().startswith(lp)]
+
+
+def _jsonb_path_expr(column: str, path: list = None):
+    """Build a safe ``psycopg2.sql.Composable`` for a JSONB path.
+
+    ``_jsonb_path_expr("meta", ["a", "b"])`` produces
+    ``"meta"->'a'->'b'``.
+    """
+    expr = pgsql.Identifier(column)
+    for key in (path or []):
+        expr = pgsql.SQL("{0}->{1}").format(expr, pgsql.Literal(key))
+    return expr
+
+
+def _jsonb_path_display(column: str, path: list = None) -> str:
+    """Human-readable version of the JSONB path (for diagnostics JSON)."""
+    result = column
+    for key in (path or []):
+        result = f"{result}->'{key}'"
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Completions handler
+# ---------------------------------------------------------------------------
 
 class PostgresCompletionsHandler(APIHandler):
     """Handler for fetching PostgreSQL table and column completions."""
@@ -30,8 +156,11 @@ class PostgresCompletionsHandler(APIHandler):
         - db_url: URL-encoded PostgreSQL connection string (fallback)
         - prefix: Optional prefix to filter results
         - schema: Database schema (default: 'public')
-        - table: Optional table name to filter columns (only returns columns from this table)
-        - schema_or_table: Ambiguous identifier - backend determines if it's a schema or table
+        - table: Optional table name to filter columns
+        - schema_or_table: Ambiguous identifier
+        - jsonb_column: JSONB column for key extraction
+        - jsonb_path: JSON-encoded path array for nested JSONB
+        - connections_file: Custom path to connections.ini
         """
         if not PSYCOPG2_AVAILABLE:
             self.set_status(500)
@@ -112,6 +241,8 @@ class PostgresCompletionsHandler(APIHandler):
                 "columns": []
             }))
 
+    # -- core logic ---------------------------------------------------------
+
     def _fetch_completions(
         self,
         db_url: str,
@@ -120,144 +251,127 @@ class PostgresCompletionsHandler(APIHandler):
         table: str = None,
         schema_or_table: str = None,
         jsonb_column: str = None,
-        jsonb_path: list = None
+        jsonb_path: list = None,
     ) -> dict:
         """Fetch table and column names from PostgreSQL.
 
-        Args:
-            db_url: PostgreSQL connection string
-            schema: Database schema name
-            prefix: Filter prefix (case-insensitive)
-            table: Optional table name to filter columns (only returns columns from this table)
-            schema_or_table: Ambiguous identifier - determine if it's a schema or table
-            jsonb_column: Optional JSONB column to extract keys from
-            jsonb_path: Optional path for nested JSONB key extraction
-
-        Returns:
-            Dictionary with tables, columns, and jsonbKeys arrays
+        Results are cached server-side (120 s TTL).  Prefix filtering is
+        done in Python after the cache lookup — SQL queries fetch full
+        result sets so that subsequent keystrokes hit the cache.
         """
-        conn = None
-        try:
-            conn = psycopg2.connect(db_url)
-            cursor = conn.cursor()
+        uid = _url_id(db_url)
 
-            tables = []
-            columns = []
-            jsonb_keys = []
-
-            # Handle JSONB key extraction
-            if jsonb_column:
-                jsonb_keys = self._fetch_jsonb_keys(
-                    cursor, schema, schema_or_table, jsonb_column, jsonb_path, prefix
-                )
-                cursor.close()
-                return {
-                    "status": "success",
-                    "tables": [],
-                    "columns": [],
-                    "jsonbKeys": jsonb_keys
-                }
-
-            # Handle schema_or_table: check if it's a schema first, then try as table
-            if schema_or_table:
-                # First, check if it's a schema
-                cursor.execute("""
-                    SELECT schema_name
-                    FROM information_schema.schemata
-                    WHERE LOWER(schema_name) = %s
-                """, (schema_or_table.lower(),))
-
-                is_schema = cursor.fetchone() is not None
-
-                if is_schema:
-                    # It's a schema - fetch tables and views from that schema
-                    cursor.execute("""
-                        SELECT table_name, table_type
-                        FROM information_schema.tables
-                        WHERE table_schema = %s
-                          AND table_type IN ('BASE TABLE', 'VIEW')
-                          AND LOWER(table_name) LIKE %s
-                        ORDER BY table_name
-                    """, (schema_or_table, f"{prefix}%"))
-
-                    tables = [
-                        {
-                            "name": row[0],
-                            "type": "view" if row[1] == 'VIEW' else "table"
-                        }
-                        for row in cursor.fetchall()
-                    ]
-                else:
-                    # Not a schema - treat as table name, fetch columns from default schema
-                    cursor.execute("""
-                        SELECT table_name, column_name, data_type
-                        FROM information_schema.columns
-                        WHERE table_schema = %s
-                          AND LOWER(table_name) = %s
-                          AND LOWER(column_name) LIKE %s
-                        ORDER BY ordinal_position
-                    """, (schema, schema_or_table.lower(), f"{prefix}%"))
-
-                    columns = [
-                        {
-                            "name": row[1],
-                            "table": row[0],
-                            "dataType": row[2],
-                            "type": "column"
-                        }
-                        for row in cursor.fetchall()
-                    ]
-
-            # If table is specified with explicit schema, fetch columns from that table
-            elif table:
-                cursor.execute("""
-                    SELECT table_name, column_name, data_type
-                    FROM information_schema.columns
-                    WHERE table_schema = %s
-                      AND LOWER(table_name) = %s
-                      AND LOWER(column_name) LIKE %s
-                    ORDER BY ordinal_position
-                """, (schema, table.lower(), f"{prefix}%"))
-
-                columns = [
-                    {
-                        "name": row[1],
-                        "table": row[0],
-                        "dataType": row[2],
-                        "type": "column"
-                    }
-                    for row in cursor.fetchall()
-                ]
-            else:
-                # No table or schema_or_table specified - fetch tables and views from default schema
-                cursor.execute("""
-                    SELECT table_name, table_type
-                    FROM information_schema.tables
-                    WHERE table_schema = %s
-                      AND table_type IN ('BASE TABLE', 'VIEW')
-                      AND LOWER(table_name) LIKE %s
-                    ORDER BY table_name
-                """, (schema, f"{prefix}%"))
-
-                tables = [
-                    {
-                        "name": row[0],
-                        "type": "view" if row[1] == 'VIEW' else "table"
-                    }
-                    for row in cursor.fetchall()
-                ]
-
-            cursor.close()
-
+        # --- JSONB key extraction ---
+        if jsonb_column:
+            cache_key = (
+                f"jsonb:{uid}:{schema}:{schema_or_table or ''}:"
+                f"{jsonb_column}:{json.dumps(jsonb_path or [])}"
+            )
+            all_keys = _cache.get(cache_key)
+            if all_keys is None:
+                with _pooled_connection(db_url) as conn:
+                    cur = conn.cursor()
+                    all_keys = self._fetch_jsonb_keys(
+                        cur, schema, schema_or_table, jsonb_column, jsonb_path,
+                    )
+                    cur.close()
+                _cache.put(cache_key, all_keys)
             return {
                 "status": "success",
-                "tables": tables,
-                "columns": columns
+                "tables": [],
+                "columns": [],
+                "jsonbKeys": _filter_by_prefix(all_keys, prefix),
             }
 
-        finally:
-            if conn:
-                conn.close()
+        # --- schema_or_table disambiguation ---
+        if schema_or_table:
+            schema_ck = f"is_schema:{uid}:{schema_or_table.lower()}"
+            is_schema = _cache.get(schema_ck)
+            if is_schema is None:
+                with _pooled_connection(db_url) as conn:
+                    cur = conn.cursor()
+                    cur.execute(
+                        "SELECT 1 FROM information_schema.schemata "
+                        "WHERE LOWER(schema_name) = %s",
+                        (schema_or_table.lower(),),
+                    )
+                    is_schema = cur.fetchone() is not None
+                    cur.close()
+                _cache.put(schema_ck, is_schema)
+
+            if is_schema:
+                return self._tables_in_schema(uid, db_url, schema_or_table, prefix)
+            return self._columns_of_table(uid, db_url, schema, schema_or_table, prefix)
+
+        # --- explicit table → columns ---
+        if table:
+            return self._columns_of_table(uid, db_url, schema, table, prefix)
+
+        # --- default: list tables in schema ---
+        return self._tables_in_schema(uid, db_url, schema, prefix)
+
+    # -- helpers ------------------------------------------------------------
+
+    def _tables_in_schema(self, uid, db_url, schema, prefix):
+        """Return tables/views in *schema*, filtered by *prefix*."""
+        cache_key = f"tables:{uid}:{schema}"
+        all_tables = _cache.get(cache_key)
+        if all_tables is None:
+            with _pooled_connection(db_url) as conn:
+                cur = conn.cursor()
+                cur.execute(
+                    "SELECT table_name, table_type "
+                    "FROM information_schema.tables "
+                    "WHERE table_schema = %s "
+                    "  AND table_type IN ('BASE TABLE', 'VIEW') "
+                    "ORDER BY table_name",
+                    (schema,),
+                )
+                all_tables = [
+                    {"name": r[0], "type": "view" if r[1] == "VIEW" else "table"}
+                    for r in cur.fetchall()
+                ]
+                cur.close()
+            _cache.put(cache_key, all_tables)
+        return {
+            "status": "success",
+            "tables": _filter_by_prefix(all_tables, prefix),
+            "columns": [],
+        }
+
+    def _columns_of_table(self, uid, db_url, schema, table, prefix):
+        """Return columns of *table*, filtered by *prefix*."""
+        cache_key = f"columns:{uid}:{schema}:{table.lower()}"
+        all_cols = _cache.get(cache_key)
+        if all_cols is None:
+            with _pooled_connection(db_url) as conn:
+                cur = conn.cursor()
+                cur.execute(
+                    "SELECT table_name, column_name, data_type "
+                    "FROM information_schema.columns "
+                    "WHERE table_schema = %s "
+                    "  AND LOWER(table_name) = %s "
+                    "ORDER BY ordinal_position",
+                    (schema, table.lower()),
+                )
+                all_cols = [
+                    {
+                        "name": r[1],
+                        "table": r[0],
+                        "dataType": r[2],
+                        "type": "column",
+                    }
+                    for r in cur.fetchall()
+                ]
+                cur.close()
+            _cache.put(cache_key, all_cols)
+        return {
+            "status": "success",
+            "tables": [],
+            "columns": _filter_by_prefix(all_cols, prefix),
+        }
+
+    # -- JSONB key extraction -----------------------------------------------
 
     def _fetch_jsonb_keys(
         self,
@@ -266,79 +380,65 @@ class PostgresCompletionsHandler(APIHandler):
         table_name: str,
         jsonb_column: str,
         jsonb_path: list = None,
-        prefix: str = ''
     ) -> list:
-        """Extract unique JSONB keys from a column in a table.
+        """Extract unique JSONB keys from a column.
 
-        Args:
-            cursor: Database cursor
-            schema: Database schema
-            table_name: Table containing the JSONB column (can be None)
-            jsonb_column: Name of the JSONB column
-            jsonb_path: Optional path for nested keys (e.g., ['user', 'profile'])
-            prefix: Filter prefix for keys
-
-        Returns:
-            List of JSONB key completion items
+        Returns the full (unfiltered) list — the caller applies prefix
+        filtering.  Uses bounded sub-queries so that at most 100 rows
+        are scanned for diagnostics and 1 000 for key extraction.
         """
         try:
-            # If no table specified, find tables with this JSONB column
+            # If no table specified, find the first table with this JSONB column
             if not table_name:
-                cursor.execute("""
-                    SELECT table_name
-                    FROM information_schema.columns
-                    WHERE table_schema = %s
-                      AND LOWER(column_name) = %s
-                      AND data_type = 'jsonb'
-                    LIMIT 1
-                """, (schema, jsonb_column.lower()))
-
+                cursor.execute(
+                    "SELECT table_name "
+                    "FROM information_schema.columns "
+                    "WHERE table_schema = %s "
+                    "  AND LOWER(column_name) = %s "
+                    "  AND data_type = 'jsonb' "
+                    "LIMIT 1",
+                    (schema, jsonb_column.lower()),
+                )
                 result = cursor.fetchone()
                 if not result:
                     self.log.warning(
-                        f"JSONB completion: No JSONB column '{jsonb_column}' found "
-                        f"in schema '{schema}'. Verify the column exists and has "
-                        f"data_type='jsonb'."
+                        f"JSONB completion: No JSONB column '{jsonb_column}' "
+                        f"found in schema '{schema}'. Verify the column exists "
+                        f"and has data_type='jsonb'."
                     )
                     return []
-
                 table_name = result[0]
                 self.log.info(
                     f"JSONB completion: Found column '{jsonb_column}' in "
                     f"table '{schema}.{table_name}'"
                 )
 
-            # Build the JSONB path expression
-            if jsonb_path and len(jsonb_path) > 0:
-                # For nested paths: column->>'key1'->>'key2'
-                path_expr = jsonb_column
-                for key in jsonb_path:
-                    path_expr = f"{path_expr}->'{key}'"
-            else:
-                # For top-level keys: just the column
-                path_expr = jsonb_column
+            path = _jsonb_path_expr(jsonb_column, jsonb_path)
+            sch = pgsql.Identifier(schema)
+            tbl = pgsql.Identifier(table_name)
 
-            # First, check the data distribution at this path for diagnostics
-            diag_query = f"""
-                SELECT
-                    COUNT(*) as total_rows,
-                    COUNT({path_expr}) as non_null_count,
-                    COUNT(CASE WHEN jsonb_typeof({path_expr}) = 'object' THEN 1 END) as object_count,
-                    COUNT(CASE WHEN jsonb_typeof({path_expr}) = 'array' THEN 1 END) as array_count,
-                    COUNT(CASE WHEN jsonb_typeof({path_expr}) IN ('string', 'number', 'boolean') THEN 1 END) as scalar_count
-                FROM {schema}.{table_name}
-                LIMIT 1000
-            """
-            cursor.execute(diag_query)
+            # Diagnostic sample (100 rows) — bounded via sub-query
+            cursor.execute(
+                pgsql.SQL(
+                    "SELECT "
+                    "  COUNT(*), "
+                    "  COUNT(jval), "
+                    "  COUNT(CASE WHEN jsonb_typeof(jval) = 'object' THEN 1 END), "
+                    "  COUNT(CASE WHEN jsonb_typeof(jval) = 'array' THEN 1 END), "
+                    "  COUNT(CASE WHEN jsonb_typeof(jval) "
+                    "    IN ('string','number','boolean') THEN 1 END) "
+                    "FROM (SELECT {0} AS jval FROM {1}.{2} LIMIT 100) sub"
+                ).format(path, sch, tbl)
+            )
             diag = cursor.fetchone()
-
-            total_rows, non_null, obj_count, arr_count, scalar_count = diag
+            _, non_null, obj_count, arr_count, scalar_count = diag
 
             if non_null == 0:
                 self.log.warning(
                     f"JSONB completion: Column '{jsonb_column}' in "
                     f"'{schema}.{table_name}' has no non-NULL values at "
-                    f"path '{path_expr}'. Keys cannot be extracted from NULL data."
+                    f"path '{_jsonb_path_display(jsonb_column, jsonb_path)}'. "
+                    f"Keys cannot be extracted from NULL data."
                 )
                 return []
 
@@ -349,56 +449,60 @@ class PostgresCompletionsHandler(APIHandler):
                 if scalar_count > 0:
                     type_info.append(f"{scalar_count} scalars")
                 self.log.warning(
-                    f"JSONB completion: Path '{path_expr}' in "
+                    f"JSONB completion: Path "
+                    f"'{_jsonb_path_display(jsonb_column, jsonb_path)}' in "
                     f"'{schema}.{table_name}' contains no JSON objects "
                     f"(found: {', '.join(type_info) if type_info else 'only NULL'}). "
                     f"Keys can only be extracted from object types."
                 )
                 return []
 
-            # Query to extract unique keys
-            # LIMIT to 1000 rows for performance (sample the table)
-            query = f"""
-                SELECT DISTINCT jsonb_object_keys({path_expr})
-                FROM {schema}.{table_name}
-                WHERE {path_expr} IS NOT NULL
-                  AND jsonb_typeof({path_expr}) = 'object'
-                LIMIT 1000
-            """
-
-            cursor.execute(query)
+            # Key extraction — scan at most 1 000 qualifying rows
+            cursor.execute(
+                pgsql.SQL(
+                    "SELECT DISTINCT jsonb_object_keys(jval) "
+                    "FROM ("
+                    "  SELECT {0} AS jval FROM {1}.{2} "
+                    "  WHERE {0} IS NOT NULL "
+                    "    AND jsonb_typeof({0}) = 'object' "
+                    "  LIMIT 1000"
+                    ") sub"
+                ).format(path, sch, tbl)
+            )
             keys = cursor.fetchall()
 
             if len(keys) == 0:
                 self.log.warning(
-                    f"JSONB completion: No keys found at path '{path_expr}' in "
+                    f"JSONB completion: No keys found at path "
+                    f"'{_jsonb_path_display(jsonb_column, jsonb_path)}' in "
                     f"'{schema}.{table_name}' despite {obj_count} objects. "
                     f"Objects may be empty {{}}."
                 )
                 return []
 
-            # Filter by prefix and format results
-            result = []
-            for row in keys:
-                key = row[0]
-                if key.lower().startswith(prefix):
-                    result.append({
-                        "name": key,
-                        "type": "jsonb_key",
-                        "keyPath": (jsonb_path or []) + [key]
-                    })
-
             self.log.info(
-                f"JSONB completion: Found {len(keys)} unique keys at '{path_expr}' "
-                f"in '{schema}.{table_name}' (sampled {obj_count} objects)"
+                f"JSONB completion: Found {len(keys)} unique keys at "
+                f"'{_jsonb_path_display(jsonb_column, jsonb_path)}' in "
+                f"'{schema}.{table_name}' (sampled {obj_count} objects)"
             )
 
-            return result
+            return [
+                {
+                    "name": r[0],
+                    "type": "jsonb_key",
+                    "keyPath": (jsonb_path or []) + [r[0]],
+                }
+                for r in keys
+            ]
 
         except psycopg2.Error as e:
             self.log.error(f"JSONB key extraction error: {str(e).split(chr(10))[0]}")
             return []
 
+
+# ---------------------------------------------------------------------------
+# JSONB diagnostics handler
+# ---------------------------------------------------------------------------
 
 class JsonbDiagnosticsHandler(APIHandler):
     """Handler for diagnosing JSONB column issues."""
@@ -488,9 +592,7 @@ class JsonbDiagnosticsHandler(APIHandler):
         jsonb_path: list = None
     ) -> dict:
         """Get diagnostic information about JSONB columns."""
-        conn = None
-        try:
-            conn = psycopg2.connect(db_url)
+        with _pooled_connection(db_url) as conn:
             cursor = conn.cursor()
 
             result = {
@@ -502,12 +604,12 @@ class JsonbDiagnosticsHandler(APIHandler):
 
             # Find all JSONB columns in the schema
             query_params = [schema]
-            query = """
-                SELECT table_name, column_name
-                FROM information_schema.columns
-                WHERE table_schema = %s
-                  AND data_type = 'jsonb'
-            """
+            query = (
+                "SELECT table_name, column_name "
+                "FROM information_schema.columns "
+                "WHERE table_schema = %s "
+                "  AND data_type = 'jsonb'"
+            )
             if table:
                 query += " AND LOWER(table_name) = %s"
                 query_params.append(table.lower())
@@ -530,34 +632,31 @@ class JsonbDiagnosticsHandler(APIHandler):
                 actual_table = jsonb_columns[0][0]
                 actual_column = jsonb_columns[0][1]
 
-                # Build path expression
-                if jsonb_path and len(jsonb_path) > 0:
-                    path_expr = actual_column
-                    for key in jsonb_path:
-                        path_expr = f"{path_expr}->'{key}'"
-                else:
-                    path_expr = actual_column
+                path_expr = _jsonb_path_expr(actual_column, jsonb_path)
+                sch_id = pgsql.Identifier(schema)
+                tbl_id = pgsql.Identifier(actual_table)
 
                 # Get type distribution
-                diag_query = f"""
-                    SELECT
-                        COUNT(*) as total_rows,
-                        COUNT({path_expr}) as non_null_count,
-                        COUNT(CASE WHEN jsonb_typeof({path_expr}) = 'object' THEN 1 END) as object_count,
-                        COUNT(CASE WHEN jsonb_typeof({path_expr}) = 'array' THEN 1 END) as array_count,
-                        COUNT(CASE WHEN jsonb_typeof({path_expr}) = 'string' THEN 1 END) as string_count,
-                        COUNT(CASE WHEN jsonb_typeof({path_expr}) = 'number' THEN 1 END) as number_count,
-                        COUNT(CASE WHEN jsonb_typeof({path_expr}) = 'boolean' THEN 1 END) as boolean_count,
-                        COUNT(CASE WHEN jsonb_typeof({path_expr}) = 'null' THEN 1 END) as json_null_count
-                    FROM {schema}.{actual_table}
-                """
+                diag_query = pgsql.SQL(
+                    "SELECT "
+                    "  COUNT(*) AS total_rows, "
+                    "  COUNT({0}) AS non_null_count, "
+                    "  COUNT(CASE WHEN jsonb_typeof({0}) = 'object' THEN 1 END) AS object_count, "
+                    "  COUNT(CASE WHEN jsonb_typeof({0}) = 'array' THEN 1 END) AS array_count, "
+                    "  COUNT(CASE WHEN jsonb_typeof({0}) = 'string' THEN 1 END) AS string_count, "
+                    "  COUNT(CASE WHEN jsonb_typeof({0}) = 'number' THEN 1 END) AS number_count, "
+                    "  COUNT(CASE WHEN jsonb_typeof({0}) = 'boolean' THEN 1 END) AS boolean_count, "
+                    "  COUNT(CASE WHEN jsonb_typeof({0}) = 'null' THEN 1 END) AS json_null_count "
+                    "FROM {1}.{2}"
+                ).format(path_expr, sch_id, tbl_id)
+
                 cursor.execute(diag_query)
                 diag = cursor.fetchone()
 
                 result["columnDiagnostics"] = {
                     "table": actual_table,
                     "column": actual_column,
-                    "pathExpression": path_expr,
+                    "pathExpression": _jsonb_path_display(actual_column, jsonb_path),
                     "totalRows": diag[0],
                     "nonNullCount": diag[1],
                     "typeDistribution": {
@@ -575,25 +674,23 @@ class JsonbDiagnosticsHandler(APIHandler):
                 # If there are objects, get sample keys
                 if diag[2] > 0:
                     try:
-                        key_query = f"""
-                            SELECT DISTINCT jsonb_object_keys({path_expr})
-                            FROM {schema}.{actual_table}
-                            WHERE {path_expr} IS NOT NULL
-                              AND jsonb_typeof({path_expr}) = 'object'
-                            LIMIT 20
-                        """
+                        key_query = pgsql.SQL(
+                            "SELECT DISTINCT jsonb_object_keys(jval) "
+                            "FROM ("
+                            "  SELECT {0} AS jval FROM {1}.{2} "
+                            "  WHERE {0} IS NOT NULL "
+                            "    AND jsonb_typeof({0}) = 'object' "
+                            "  LIMIT 1000"
+                            ") sub"
+                        ).format(path_expr, sch_id, tbl_id)
                         cursor.execute(key_query)
                         keys = [row[0] for row in cursor.fetchall()]
-                        result["columnDiagnostics"]["sampleKeys"] = keys
+                        result["columnDiagnostics"]["sampleKeys"] = keys[:20]
                     except psycopg2.Error:
                         result["columnDiagnostics"]["sampleKeys"] = []
 
             cursor.close()
             return result
-
-        finally:
-            if conn:
-                conn.close()
 
     def _get_recommendation(self, diag) -> str:
         """Generate a recommendation based on diagnostic data."""
@@ -628,6 +725,10 @@ class JsonbDiagnosticsHandler(APIHandler):
         return f"JSONB autocompletion should work. Found {obj} objects with extractable keys."
 
 
+# ---------------------------------------------------------------------------
+# Connections handler
+# ---------------------------------------------------------------------------
+
 class ConnectionsHandler(APIHandler):
     """Handler for listing available database connections."""
 
@@ -659,6 +760,10 @@ class ConnectionsHandler(APIHandler):
                 "connections": {}
             }))
 
+
+# ---------------------------------------------------------------------------
+# Route registration
+# ---------------------------------------------------------------------------
 
 def setup_route_handlers(web_app):
     """Register route handlers with the Jupyter server."""

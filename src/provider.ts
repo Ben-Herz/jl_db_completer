@@ -308,32 +308,30 @@ export class PostgresCompletionProvider implements ICompletionProvider {
     // Extract context: schema, table, and prefix
     const extracted = this._extractContext(text, offset);
 
-    // Create cache key that includes full context
+    // Cache key excludes prefix so the full result set is cached
+    // and filtered locally, avoiding a backend call per keystroke.
     let cacheKey: string;
     if (extracted.jsonbColumn) {
-      // JSONB key completion: table.column->path
       const pathStr = extracted.jsonbPath?.join('.') || '';
       const tablePrefix = extracted.schemaOrTable
         ? `${extracted.schemaOrTable}.`
         : '';
       cacheKey =
-        `${tablePrefix}${extracted.jsonbColumn}->${pathStr}.${extracted.prefix}`.toLowerCase();
+        `jsonb:${tablePrefix}${extracted.jsonbColumn}->${pathStr}`.toLowerCase();
     } else if (extracted.schema && extracted.tableName) {
-      // schema.table.prefix
       cacheKey =
-        `${extracted.schema}.${extracted.tableName}.${extracted.prefix}`.toLowerCase();
+        `cols:${extracted.schema}.${extracted.tableName}`.toLowerCase();
     } else if (extracted.schemaOrTable) {
-      // schema.prefix OR table.prefix (ambiguous)
-      cacheKey = `${extracted.schemaOrTable}.${extracted.prefix}`.toLowerCase();
+      cacheKey = `sot:${extracted.schemaOrTable}`.toLowerCase();
     } else {
-      // just prefix
-      cacheKey = extracted.prefix.toLowerCase();
+      cacheKey = `tables:${this._schema}`.toLowerCase();
     }
 
-    // Check cache first
+    // Check cache first — filter by prefix locally
     const cached = this._getCached(cacheKey);
     if (cached) {
-      return this._formatReply(cached, request.offset, extracted.prefix);
+      const filtered = this._filterByPrefix(cached, extracted.prefix);
+      return this._formatReply(filtered, request.offset, extracted.prefix);
     }
 
     // Fetch from database
@@ -363,7 +361,7 @@ export class PostgresCompletionProvider implements ICompletionProvider {
 
       const items = await fetchPostgresCompletions(
         connectionName || undefined,
-        extracted.prefix,
+        '', // Fetch all items — filter by prefix locally
         extracted.schema || this._schema,
         extracted.tableName,
         extracted.schemaOrTable,
@@ -372,13 +370,14 @@ export class PostgresCompletionProvider implements ICompletionProvider {
         connectionsFilePath
       );
 
-      // Cache the results
+      // Cache full (unfiltered) results
       this._cache.set(cacheKey, {
         items,
         timestamp: Date.now()
       });
 
-      return this._formatReply(items, request.offset, extracted.prefix);
+      const filtered = this._filterByPrefix(items, extracted.prefix);
+      return this._formatReply(filtered, request.offset, extracted.prefix);
     } catch (error) {
       console.error('Failed to fetch PostgreSQL completions:', error);
       return { start: request.offset, end: request.offset, items: [] };
@@ -640,6 +639,20 @@ export class PostgresCompletionProvider implements ICompletionProvider {
       end,
       items: formattedItems
     };
+  }
+
+  /**
+   * Filter completion items by prefix (case-insensitive startsWith).
+   */
+  private _filterByPrefix(
+    items: ICompletionItem[],
+    prefix: string
+  ): ICompletionItem[] {
+    if (!prefix) {
+      return items;
+    }
+    const lower = prefix.toLowerCase();
+    return items.filter(item => item.name.toLowerCase().startsWith(lower));
   }
 
   /**
